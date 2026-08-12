@@ -1,0 +1,29 @@
+# 行尾:凡是要在 Jetson 上執行的,一律 LF。
+#
+# Windows 的 git 預設 core.autocrlf=true,checkout 時會把 LF 換成 CRLF。
+# 那些檔案傳到 Linux 上,bash 會把行尾的 \r 當成指令的一部分:
+#     $'\r': command not found
+#     syntax error near unexpected token `$'{\r''
+# 而且錯誤訊息完全看不出是行尾問題。這次整併前是靠每次 scp 之後
+# 手動 sed -i 's/\r$//' 補救,漏一次就中招。
+#
+# 明確標成 text eol=lf 之後,不管在哪個平台 checkout 都是 LF。
+*.sh    text eol=lf
+*.py    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.xml   text eol=lf
+*.xacro text eol=lf
+*.urdf  text eol=lf
+*.rviz  text eol=lf
+
+# 這些只在 Windows 跑,維持 CRLF
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# 二進位,不要碰
+*.STL   binary
+*.stl   binary
+*.png   binary
+*.jpg   binary
+*.pdf   binary

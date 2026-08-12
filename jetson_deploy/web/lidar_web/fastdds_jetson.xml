@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Jetson 端 Fast DDS 設定 —— 佈署到 ~/lidar_web/fastdds_jetson.xml
+
+  只做一件事:放大 socket 緩衝。
+  不改 transport、不改 locator,所以本機節點之間的通訊完全不受影響。
+
+  發送端的緩衝同樣重要 —— 0.36 MB 的點雲拆片後如果送出緩衝不足,
+  分片在離開這台機器之前就已經被丟掉了。
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+
+    <participant profile_name="jetson_participant" is_default_profile="true">
+      <rtps>
+        <sendSocketBufferSize>8388608</sendSocketBufferSize>
+        <listenSocketBufferSize>8388608</listenSocketBufferSize>
+        <useBuiltinTransports>true</useBuiltinTransports>
+      </rtps>
+    </participant>
+
+  </profiles>
+</dds>
