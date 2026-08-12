@@ -15,7 +15,16 @@
 #   症狀是車在地圖上瞬移。所以這支會先把 slam_toolbox 停掉。
 #
 # ── 前提 ────────────────────────────────────────────────────────
-#   startall.sh 和 robot_tf.sh 已經跑過(要有 /scan 和 multi_odom -> base_footprint)
+#   startall.sh(FAST-LIO)和 robot_tf.sh(EKF -> multi_odom)已經跑過。
+#   /scan 不用先起 —— 沒有的話這支會自己叫 start_scan.sh。
+#
+# ── ★ 起來之後還要給初始位置,否則 TF tree 是斷的 ────────────────
+#   set_initial_pose: false,AMCL 收到 /initialpose 才開始發 map -> multi_odom。
+#   在那之前 rqt_tf_tree 會看到 map 孤立在旁邊,接不到 multi_odom —— 那是
+#   正常的等待狀態,不是故障。給法:
+#       RViz 工具列「2D Pose Estimate」在圖上點車的實際位置、拖出朝向
+#       或  python3 waypoint.py init <航點名>
+#       或  bash start_localization.sh <地圖> <x> <y> <yaw度>
 source /opt/ros/humble/setup.bash
 source ~/ws_livox/install/setup.bash
 export ROS_DOMAIN_ID=0
@@ -45,7 +54,16 @@ echo "[2/5] 前置檢查"
 fail=0
 hz() { timeout 8 ros2 topic hz "$1" 2>&1 | grep -oE "average rate: [0-9.]+" | head -1 | grep -oE "[0-9.]+"; }
 S=$(hz /scan)
-[ -n "$S" ] && echo "    /scan  $S Hz" || { echo "    ✗ /scan 沒資料 —— 先跑 start_slam2d.sh"; fail=1; }
+if [ -z "$S" ]; then
+    # ★ /scan 的產生器在 start_scan.sh,建圖和定位共用。
+    #   bringup_all.sh 的 loc 模式不跑 start_slam2d.sh,所以在這裡自己起 ——
+    #   2026-08-12 就是因為沒人起它,定位整條中止、map -> multi_odom 接不上。
+    echo "    /scan 沒資料,啟動 pointcloud_to_laserscan"
+    bash "$D/start_scan.sh" > /tmp/start_scan.log 2>&1
+    sed 's/^/      /' /tmp/start_scan.log
+    S=$(hz /scan)
+fi
+[ -n "$S" ] && echo "    /scan  $S Hz" || { echo "    ✗ /scan 還是沒資料 —— FAST-LIO 起來了嗎"; fail=1; }
 if timeout 10 ros2 run tf2_ros tf2_echo multi_odom base_footprint 2>&1 | grep -q Translation; then
     echo "    multi_odom -> base_footprint OK"
 else
