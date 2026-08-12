@@ -28,6 +28,39 @@ for c in nvblox nvblox_mesh_web; do
         && echo "  removed stale container: $c"
 done
 
+# ---- kill previous instances -------------------------------------------
+# 2026-08-12: this used to kill ONLY the camera. Re-running the script then
+# left the old livox driver and the old FAST-LIO alive, and
+# `systemd-run --unit=fastlio-run` refuses to start when the unit already
+# exists -- so the NEW FAST-LIO never started and the stale one stayed.
+#
+# The stale FAST-LIO is worse than none: its IMU subscription is dead, so it
+# spams "IMU and LiDAR not Synced" (IMU clock frozen 510 s behind the lidar)
+# and publishes NOTHING -- no /cloud_registered_body, so no /scan, so AMCL
+# never comes up. Meanwhile `pgrep -f fastlio_mapping` sees the zombie and
+# reports [OK]. Silent for 73 minutes.
+echo
+echo "[0b/8] stop previous sensor stack"
+for u in fastlio-run; do
+    systemctl --user stop "$u.scope"        2>/dev/null
+    systemctl --user reset-failed "$u.scope" 2>/dev/null
+done
+# SIGTERM first: the livox driver has to release the UDP socket, and killing
+# it with -9 leaves the port bound long enough that the next driver logs
+# "Init lds lidar fail" and exits.
+pkill -f fastlio_mapping        2>/dev/null
+pkill -f livox_ros_driver2_node 2>/dev/null
+pkill -f msg_MID360_launch      2>/dev/null
+pkill -f realsense2_camera_node 2>/dev/null
+for i in $(seq 1 10); do
+    pgrep -f "fastlio_mapping|livox_ros_driver2_node" > /dev/null || break
+    sleep 1
+done
+pkill -9 -f fastlio_mapping        2>/dev/null
+pkill -9 -f livox_ros_driver2_node 2>/dev/null
+sleep 2
+echo "  cleared"
+
 echo
 echo "[1/8] wait for lidar NIC"
 for i in $(seq 1 30); do
@@ -63,7 +96,6 @@ sleep 18
 # intrinsics on the first CameraInfo; starting it first just means the first
 # few seconds of cloud arrive uncolored.
 echo "[4/8] RealSense D435 (640x480 @15, aligned depth)"
-pkill -f realsense2_camera_node 2>/dev/null; sleep 2
 setsid nohup ros2 launch realsense2_camera rs_launch.py \
     enable_depth:=true enable_color:=true \
     enable_infra1:=false enable_infra2:=false \
@@ -98,10 +130,35 @@ echo "[5/8] camera extrinsic"
 #   兩支腳本都起同樣的東西會互相 pkill,實測會卡住。
 
 echo "=== status ==="
-for p in livox_ros_driver2_node fastlio_mapping async_slam_toolbox_node \
-         pointcloud_to_laserscan zenoh-bridge-ros2dds realsense2_camera_node; do
+for p in livox_ros_driver2_node fastlio_mapping realsense2_camera_node; do
     pgrep -f "$p" > /dev/null && echo "  [OK]   $p" || echo "  [DEAD] $p"
 done
+
+# ★ A live process is NOT proof the node works. A stale FAST-LIO whose IMU
+#   subscription died keeps running and publishes nothing -- pgrep says [OK]
+#   while the whole downstream chain (/scan -> AMCL -> map) is dead.
+#   So check the OUTPUT, not the process. 2026-08-12: this exact zombie cost
+#   an hour of chasing "why is map not connected in the TF tree".
+echo "=== output ==="
+hz() { timeout 12 ros2 topic hz "$1" 2>&1 | grep -oE "average rate: [0-9.]+" \
+       | head -1 | grep -oE "[0-9.]+"; }
+FAIL=0
+for t in /livox/lidar /livox/imu /cloud_registered_body /Odometry; do
+    H=$(hz "$t")
+    if [ -n "$H" ]; then
+        printf "  [OK]   %-24s %s Hz\n" "$t" "$H"
+    else
+        printf "  [NONE] %-24s\n" "$t"
+        FAIL=1
+    fi
+done
+if [ "$FAIL" = "1" ]; then
+    echo
+    echo "  FAST-LIO not producing. Most common cause:"
+    grep -c "not Synced" /tmp/fastlio.log 2>/dev/null \
+        | awk '{if ($1>0) print "    IMU/LiDAR desync -- "$1" lines in /tmp/fastlio.log"}'
+    tail -4 /tmp/fastlio.log 2>/dev/null | sed 's/^/    /'
+fi
 free -m | head -2 | sed 's/^/  /'
 
 echo
