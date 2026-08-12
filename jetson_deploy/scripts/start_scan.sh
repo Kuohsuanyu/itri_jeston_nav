@@ -44,6 +44,30 @@ RANGE_MIN=0.70
 
 echo "  /scan  高度帶 $MIN_H ~ $MAX_H m(離地),range_min $RANGE_MIN m"
 
+# ---- 先等 FAST-LIO ------------------------------------------------------
+# ★ FAST-LIO 起來之後還要做 IMU 靜止初始化 + 建 ikd-Tree,才開始發點雲。
+#   實測從行程啟動到第一筆 /cloud_registered_body 要 30~60 秒,而
+#   startall.sh 只 sleep 18。中間這段空窗期如果直接檢查 /scan,會得到
+#   「行程活著但沒資料」然後整條定位鏈中止 —— 2026-08-12 連續失敗兩次,
+#   而 15 秒後其實就正常了。
+#
+#   不能靠加大 sleep 解決:初始化時間跟現場環境有關(點太少會重試)。
+#   等條件成立,不要等固定秒數。
+echo -n "  等 /cloud_registered_body "
+for i in $(seq 1 20); do
+    if timeout 5 ros2 topic echo /cloud_registered_body --once > /dev/null 2>&1; then
+        echo " 好了(${i} 次嘗試)"
+        break
+    fi
+    echo -n "."
+    [ "$i" = "20" ] && {
+        echo " 逾時"
+        echo "  ✗ FAST-LIO 沒有輸出點雲。看 /tmp/fastlio.log:"
+        tail -5 /tmp/fastlio.log 2>/dev/null | cut -c1-110 | sed 's/^/      /'
+        exit 1
+    }
+done
+
 pkill -f pointcloud_to_laserscan_node 2>/dev/null; sleep 1
 setsid nohup ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
   --ros-args \
