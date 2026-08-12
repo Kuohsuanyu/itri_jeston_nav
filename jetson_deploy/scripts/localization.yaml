@@ -1,0 +1,88 @@
+# 用既有地圖定位(不建圖)。map_server 放地圖,AMCL 算「我在哪」。
+#
+# ── 跟建圖模式的差別 ──────────────────────────────────────────────
+#   建圖:slam_toolbox 一邊建 /map 一邊發 map -> multi_odom
+#   定位:map_server 發固定的 /map,AMCL 發 map -> multi_odom
+#
+# ★ 兩者只能擇一。map -> multi_odom 只能有一個發布者,兩個都跑就是雙父節點
+#   —— tf2 不報錯,只會在兩個答案之間隨機翻轉。start_localization.sh 會先
+#   把 slam_toolbox 停掉。
+
+map_server:
+  ros__parameters:
+    use_sim_time: false
+    # yaml_filename 由 start_localization.sh 用 --ros-args -p 覆寫,
+    # 這裡只是預設值
+    yaml_filename: "/home/andykuo/maps/map_20260810_143714.yaml"
+    topic_name: "map"
+    frame_id: "map"
+
+amcl:
+  ros__parameters:
+    use_sim_time: false
+
+    # ── 座標系 ────────────────────────────────────────────────────
+    # ★ odom_frame_id 是 multi_odom 不是 odom。我們的里程計是 EKF 融合
+    #   輪速 + 光達之後發的 multi_odom -> base_footprint,底盤原本那條
+    #   odom -> base_footprint 已經被關掉(publish_tf: false)。
+    #   填錯的話 AMCL 會一直等一個不存在的變換,而且只會安靜地不動作。
+    base_frame_id: "base_footprint"
+    odom_frame_id: "multi_odom"
+    global_frame_id: "map"
+    scan_topic: "scan"
+
+    # ── 粒子數 ────────────────────────────────────────────────────
+    # 這台的里程計很準(光達 + 輪速融合),不需要大量粒子去補里程計的爛。
+    # Orin Nano 同時還要跑 FAST-LIO,粒子開太多會排擠到它。
+    min_particles: 300
+    max_particles: 1500
+    pf_err: 0.05
+    pf_z: 0.99
+
+    # ── 運動模型 ──────────────────────────────────────────────────
+    # 差動輪。alpha 是里程計雜訊,值越小代表越信任里程計。
+    # 預設值(0.2)是給純輪速抓的,我們的融合里程計好得多,所以調小 ——
+    # 調太大的話粒子會過度發散,在長廊這種特徵少的地方反而定不住。
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    alpha1: 0.1     # 旋轉造成的旋轉誤差
+    alpha2: 0.1     # 平移造成的旋轉誤差
+    alpha3: 0.1     # 平移造成的平移誤差
+    alpha4: 0.1     # 旋轉造成的平移誤差
+    alpha5: 0.1     # 橫move(差動輪用不到,填著)
+
+    # ── 雷射模型 ──────────────────────────────────────────────────
+    # likelihood_field 比 beam 快很多而且對地圖的小誤差比較寬容,
+    # 這張圖是 08-10 建的、當時 /scan 的高度帶還是錯的,寬容一點比較好。
+    laser_model_type: "likelihood_field"
+    laser_likelihood_max_dist: 2.0
+    laser_min_range: 0.7      # 跟 start_slam2d.sh 的 RANGE_MIN 一致,
+                              # 小於這個距離的是車體自己
+    laser_max_range: 40.0     # Mid-360 的實際射程,跟 mid360.yaml 的 det_range 一致
+    max_beams: 120            # /scan 有 720 束,全用太貴而且沒有更準
+
+    z_hit: 0.7
+    z_rand: 0.3
+    z_max: 0.05
+    z_short: 0.05
+    sigma_hit: 0.2
+    lambda_short: 0.1
+
+    # ── 更新時機 ──────────────────────────────────────────────────
+    # 走 0.2 m 或轉 0.2 rad 才更新一次。太密會白吃 CPU,
+    # 太疏在轉彎時會跟不上。
+    update_min_d: 0.2
+    update_min_a: 0.2
+    resample_interval: 1
+    transform_tolerance: 0.5   # map -> odom 的有效期。WiFi 抖動時放寬一點,
+                               # 太小會讓 Nav2 一直抱怨 extrapolation
+    recovery_alpha_slow: 0.001 # 開啟粒子注入(綁架偵測)。兩個都是 0 就關閉,
+    recovery_alpha_fast: 0.1   # 開著的話定位掉了會自己嘗試重新找
+
+    save_pose_rate: 0.5
+    tf_broadcast: true
+    always_reset_initial_pose: false
+    # first_map_only false:重新載入地圖時 AMCL 會跟著換
+    first_map_only: false
+
+    # 初始位置由 start_localization.sh 傳入,或在 RViz 用「2D Pose Estimate」點
+    set_initial_pose: false
