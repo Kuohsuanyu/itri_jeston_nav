@@ -53,13 +53,29 @@ LOG=/tmp/zenoh_jetson.log
 
 # ★ pkill -x 對 zenoh-bridge-ros2dds 沒用:Linux 的 comm 上限 15 字元,
 #   實際只有 "zenoh-bridge-ro",精確比對永遠對不上。用 pgrep -f 抓 PID。
+# ★ 一律先 SIGTERM 並**等它真的走完**,不要急著 -9。
+#
+# kill -9 會讓 zenoh session 沒機會關閉,對端(WSL)的路由就留成殘留。
+# 累積下來的症狀是同一個 topic 出現好幾個發布者:
+#     /scan 4 個、/tf_static 7 個、路由 669 條(正常約 190)
+# RViz 同一幀掃描收到四次、TF 收到五次,直接卡死。
+# 2026-08-12 實測,而且是我自己反覆 -9 造成的。
 PIDS=$(pgrep -f zenoh-bridge-ros2dds || true)
 if [ -n "$PIDS" ]; then
-    echo "  停掉舊的 (PID $PIDS)"
+    echo "  停掉舊的 (PID $PIDS),等它關閉 session"
     kill $PIDS 2>/dev/null || true
-    sleep 4
-    PIDS=$(pgrep -f zenoh-bridge-ros2dds || true)
-    [ -n "$PIDS" ] && { kill -9 $PIDS 2>/dev/null || true; sleep 2; }
+    for i in $(seq 1 12); do
+        sleep 1
+        pgrep -f zenoh-bridge-ros2dds > /dev/null || break
+    done
+    if pgrep -f zenoh-bridge-ros2dds > /dev/null; then
+        echo "  ⚠ 12 秒沒走,強制 —— 對端可能會留下殘留路由"
+        kill -9 $(pgrep -f zenoh-bridge-ros2dds) 2>/dev/null || true
+        sleep 3
+    else
+        echo "  已乾淨關閉"
+    fi
+    sleep 3   # 讓 DDS 的探索散播 unmatch
 fi
 
 echo "  啟動 bridge(監聽 tcp/0.0.0.0:7447)"
@@ -91,3 +107,20 @@ if grep -qi "Address already in use" "$LOG"; then
     echo "  ✗ 7447 被佔用 —— 舊的 bridge 還在"
     exit 1
 fi
+
+# 檢查有沒有製造重複發布者。bridge 應該只**轉發**,不該讓本機的 topic
+# 多出發布者 —— 多出來就是殘留路由或迴圈,RViz 會收到重複資料而卡死。
+sleep 5
+echo "  發布者檢查(每個應該都是 1):"
+BAD=0
+for t in /scan /map /cloud_registered; do
+    n=$(timeout 10 ros2 topic info "$t" 2>/dev/null | grep -oE "Publisher count: [0-9]+" | grep -oE "[0-9]+")
+    printf "    %-20s %s
+" "$t" "${n:-?}"
+    [ "${n:-1}" -gt 1 ] && BAD=1
+done
+[ "$BAD" = "1" ] && {
+    echo "  ⚠ 有重複發布者 —— 兩端都停掉(SIGTERM)再依序啟動:"
+    echo "     WSL:  kill \$(pgrep -f zenoh-bridge-ros2dds)"
+    echo "     Jetson: 再跑一次這支"
+}
