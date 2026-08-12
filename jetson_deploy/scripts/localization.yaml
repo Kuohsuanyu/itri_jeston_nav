@@ -75,8 +75,17 @@ amcl:
     resample_interval: 1
     transform_tolerance: 0.5   # map -> odom 的有效期。WiFi 抖動時放寬一點,
                                # 太小會讓 Nav2 一直抱怨 extrapolation
-    recovery_alpha_slow: 0.001 # 開啟粒子注入(綁架偵測)。兩個都是 0 就關閉,
-    recovery_alpha_fast: 0.1   # 開著的話定位掉了會自己嘗試重新找
+    # ★ 兩個都設 0 = 關閉隨機粒子注入(這是 AMCL 的預設值)。
+    #
+    # 開著的話(0.001 / 0.1)AMCL 會在匹配分數低時持續灌入亂數粒子,
+    # 試圖從「被綁架」的狀態恢復。但代價是:匹配本來就不好的時候,
+    # 它會一直注入、估計位置一直跳 —— 2026-08-12 實測就是這個症狀,
+    # 車靜止不動但地圖上的位置一直游移。
+    #
+    # 這台車不會被人抱走,綁架偵測沒有意義。定位掉了就人工用
+    # RViz 的 2D Pose Estimate 重指定,比讓它亂猜可靠。
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0
 
     save_pose_rate: 0.5
     tf_broadcast: true
