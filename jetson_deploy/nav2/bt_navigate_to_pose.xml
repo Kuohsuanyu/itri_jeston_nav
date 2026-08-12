@@ -1,0 +1,46 @@
+<!--
+  Nav2 預設行為樹的複製品,拿掉 BackUp。
+
+  為什麼要自己一份:預設的 navigate_to_pose_w_replanning_and_recovery.xml
+  在復原階段會呼叫 BackUp,而我們的 behavior_server 只註冊了 spin 和 wait
+  (見 nav2_control.yaml 的說明:這台車 1 公尺長、沒有後方感測器,盲倒車
+  不能接受)。BT 載入時找不到 backup action server 就整個 configure 失敗,
+  bt_navigator 起不來。
+
+  把 BackUp 從復原輪替裡拿掉即可,其餘結構與官方版本相同:
+    規劃(每秒重算)-> 跟隨路徑 -> 失敗才進復原
+    復原輪替:清 costmap -> 原地旋轉 -> 等待
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context"
+                                service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context"
+                              service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree"
+                                service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree"
+                                service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Spin spin_dist="1.57"/>
+          <Wait wait_duration="5"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

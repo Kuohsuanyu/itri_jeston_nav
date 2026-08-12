@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Jetson 端的 Fast DDS 設定 —— 讓探索走單播,不要只靠 multicast。
+
+  ── 為什麼需要 ──────────────────────────────────────────────────
+  DDS 的參與者探索預設走 multicast(239.255.0.1)。WiFi 的 AP 對 multicast
+  幾乎都會降速到最低基本速率、而且不保證送達,結果是「時好時壞」:
+
+    2026-08-11 實測
+      Jetson 收得到底盤的資料      /tf 輪子 5 Hz、/joint_states 7.7 Hz  ✓
+      ros2 node list 看得到底盤    ✗ 一個都沒有
+      zenoh bridge 探索到底盤      ✗ 所以不幫 /joint_states /odom
+                                     /battery_state 建路由
+
+  資料在流是因為訂閱者和發布者曾經配對成功(端點探索完成過);
+  但**節點層級**的資訊要靠持續的 multicast 公告維持,那一半掉了。
+  凡是「按探索到的節點做事」的東西都會出錯 —— zenoh bridge 是,
+  ros2 node list 也是。這已經誤導我們好幾次,誤判成「底盤沒上線」。
+
+  ── 做法 ────────────────────────────────────────────────────
+  initialPeersList 直接寫死底盤的 IP。Fast DDS 會**額外**用單播對那個位址
+  發參與者公告,不必等 multicast。multicast 保持開啟,兩條路並用。
+
+  ★ 底盤換 IP 的話這裡要改。目前 itri-base = 192.168.40.160。
+
+  ★ 這個檔要靠 FASTRTPS_DEFAULT_PROFILES_FILE 指定,而且是**每個行程各自**
+    讀的 —— 只有設了環境變數的那個行程會生效。所以想讓 ros2 node list
+    也看得到底盤,那個終端機也要 export。
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+
+    <participant profile_name="jetson_participant" is_default_profile="true">
+      <rtps>
+        <!-- 點雲每則 0.36 MB,遠超過單一 UDP datagram,一定會分片。
+             預設緩衝裝不下所有分片,症狀是「小訊息正常、點雲收不到」。 -->
+        <sendSocketBufferSize>8388608</sendSocketBufferSize>
+        <listenSocketBufferSize>8388608</listenSocketBufferSize>
+
+        <!-- 保持 true。試過用自訂 transport 取代內建的,結果連本機
+             行程之間都連不上。這裡只加參數,不換 transport。 -->
+        <useBuiltinTransports>true</useBuiltinTransports>
+
+        <builtin>
+          <initialPeersList>
+            <!-- 底盤樹莓派 itri-base -->
+            <locator>
+              <udpv4>
+                <address>192.168.40.160</address>
+              </udpv4>
+            </locator>
+            <!-- 自己,確保本機行程之間一定看得到 -->
+            <locator>
+              <udpv4>
+                <address>127.0.0.1</address>
+              </udpv4>
+            </locator>
+          </initialPeersList>
+        </builtin>
+      </rtps>
+    </participant>
+
+  </profiles>
+</dds>

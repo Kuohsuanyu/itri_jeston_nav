@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Jetson 端 —— 只套用在 FAST-LIO 這一個節點上。
+
+  設計重點(前一版踩到的兩個坑):
+
+  1. useBuiltinTransports 必須保持 true(預設)。
+     關掉的話 FAST-LIO 就只剩 TCP,無法用 UDP/共享記憶體跟本機的
+     光達驅動、網頁檢視器溝通,整個本機 ROS graph 會斷掉。
+     這裡是「在內建 transport 之外,再加一個 TCP 伺服器」。
+
+  2. 不要套用到所有節點。
+     listening_ports 是固定的 42100,同一台機器上多個 participant
+     都想綁同一個埠,只有一個搶得到,其餘 participant 建立失敗。
+     只有 FAST-LIO 需要被 WSL 連進來(/cloud_registered、/Odometry、
+     /path、/tf 都是它發的),其他節點維持預設就好。
+
+  有了 listening_ports,Fast DDS 會自動對外宣告對應的 TCP locator,
+  不需要手動寫 metatrafficUnicastLocatorList —— 手動寫反而會蓋掉
+  內建的 UDP locator,又把本機通訊弄壞。
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>tcp_server</transport_id>
+        <type>TCPv4</type>
+        <listening_ports>
+          <port>42100</port>
+        </listening_ports>
+        <sendBufferSize>8388608</sendBufferSize>
+        <receiveBufferSize>8388608</receiveBufferSize>
+        <!-- Fast DDS 硬性上限 65500,寫更大會讓 transport 註冊失敗 -->
+        <maxMessageSize>65500</maxMessageSize>
+        <calculate_crc>false</calculate_crc>
+        <check_crc>false</check_crc>
+      </transport_descriptor>
+    </transport_descriptors>
+
+    <participant profile_name="tcp_server_participant" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>tcp_server</transport_id>
+        </userTransports>
+        <!-- 保留內建 UDP/SHM,本機節點才連得到 -->
+        <useBuiltinTransports>true</useBuiltinTransports>
+      </rtps>
+    </participant>
+
+  </profiles>
+</dds>

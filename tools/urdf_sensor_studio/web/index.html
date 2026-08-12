@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>URDF Sensor Studio</title>
+<style>
+  :root{--bg:#0a0e15;--panel:rgba(17,23,33,.95);--line:rgba(120,160,220,.18);
+        --fg:#dde6f3;--dim:#7e8ea5;--accent:#4ea1ff;--ok:#39d98a;--warn:#ffc857;--bad:#ff5f6d}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);overflow:hidden;
+    font:13px/1.55 ui-monospace,"Cascadia Mono",Consolas,monospace}
+  #view{position:fixed;inset:0 372px 0 0}
+  canvas{display:block}
+  #side{position:fixed;top:0;right:0;bottom:0;width:372px;background:var(--panel);
+    border-left:1px solid var(--line);padding:14px;overflow-y:auto}
+  h1{margin:0;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--accent);font-weight:600}
+  h2{margin:0 0 6px;font-size:11px;letter-spacing:.10em;text-transform:uppercase;
+    color:var(--dim);font-weight:600}
+  .note{color:var(--dim);font-size:11px;line-height:1.7;margin:4px 0 10px}
+  hr{border:0;border-top:1px solid var(--line);margin:13px 0}
+  .btns{display:flex;gap:6px;margin:8px 0}
+  button{flex:1;background:rgba(78,161,255,.10);color:var(--fg);border:1px solid var(--line);
+    border-radius:7px;padding:7px 5px;cursor:pointer;font:inherit;font-size:11px}
+  button:hover:not(:disabled){background:rgba(78,161,255,.24);border-color:var(--accent)}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button.go{background:rgba(57,217,138,.14);border-color:rgba(57,217,138,.4)}
+  button.go:hover:not(:disabled){background:var(--ok);color:#04101f;font-weight:600}
+  input,select{background:#060a10;border:1px solid var(--line);border-radius:5px;
+    color:var(--fg);padding:5px 7px;font:inherit;font-size:12px;width:100%;
+    font-variant-numeric:tabular-nums}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .f{display:grid;grid-template-columns:46px 1fr 88px;align-items:center;gap:6px;margin:4px 0}
+  .f label{color:var(--dim);font-size:11px}
+  .f input[type=range]{padding:0;accent-color:var(--accent);height:3px}
+  .s{border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin:7px 0;
+    background:rgba(78,161,255,.04)}
+  .s.sel{border-color:var(--accent);background:rgba(78,161,255,.10)}
+  .s .hd{display:flex;align-items:center;gap:7px;cursor:pointer}
+  .s .sw{width:11px;height:11px;border-radius:3px;flex:none}
+  .s .hd b{flex:1;font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .s .rm{flex:none;width:22px;padding:2px;background:none;border-color:transparent;
+    color:var(--dim);font-size:12px}
+  .s .rm:hover{color:var(--bad);border-color:var(--line)}
+  .s .body{margin-top:8px;display:none}
+  .s.sel .body{display:block}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:5px 0}
+  .row{display:flex;justify-content:space-between;padding:2px 0;font-size:11px}
+  .row span:first-child{color:var(--dim)}
+  #msg{font-size:11px;min-height:17px;margin-top:6px}
+  .hint{position:fixed;left:14px;bottom:12px;color:var(--dim);font-size:11px;
+    line-height:1.7;opacity:.8;pointer-events:none}
+  .tag{display:inline-block;background:rgba(120,160,220,.14);border:1px solid var(--line);
+    border-radius:4px;padding:0 5px;font-size:10px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div class="hint">左鍵 旋轉 · 右鍵 平移 · 滾輪 縮放<br>紅綠藍三軸 = 選取感測器的 X / Y / Z</div>
+
+<div id="side">
+  <h1>URDF Sensor Studio</h1>
+  <div class="note" id="src">載入中…</div>
+
+  <hr>
+  <h2>感測器</h2>
+  <div class="btns">
+    <button id="b-add">＋ 新增方塊</button>
+    <button id="b-import">⭱ 匯入 STL</button>
+  </div>
+  <input type="file" id="file" accept=".stl" style="display:none">
+  <div id="list"></div>
+  <p class="note" id="empty">還沒有感測器。按「新增方塊」開始,之後可以換成 STL。</p>
+
+  <hr>
+  <h2>匯出</h2>
+  <p class="note" style="margin-top:0">會產生自足的資料夾:新 URDF + 所有 mesh 複製一份 +
+  原始檔備份(檔名標記 <span class="tag">.original</span>)。</p>
+  <input id="out" placeholder="輸出資料夾,例如 D:\out\qbot">
+  <div class="btns">
+    <button id="b-export" class="go">匯出</button>
+  </div>
+  <div id="msg"></div>
+  <div id="done" class="note"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './vendor/OrbitControls.js';
+
+const $ = id => document.getElementById(id);
+const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+const PALETTE = [0x4ea1ff, 0xffc857, 0x39d98a, 0xff7ba8, 0xb98cff, 0x66e0d8];
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e15);
+const camera = new THREE.PerspectiveCamera(48, 1, 0.01, 200);
+camera.up.set(0, 0, 1);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+$('view').appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.09;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.74));
+const l1 = new THREE.DirectionalLight(0xffffff, 0.85); l1.position.set(2, -3, 4);
+const l2 = new THREE.DirectionalLight(0x88aaff, 0.33); l2.position.set(-3, 2, 1);
+scene.add(l1, l2);
+const grid = new THREE.GridHelper(10, 40, 0x2c3c52, 0x18222f);
+grid.rotation.x = Math.PI / 2; scene.add(grid);
+
+let MODEL = null;
+const linkObj = {};       // link name -> THREE.Object3D(在世界座標)
+const sensors = [];
+let sel = -1;
+
+/* URDF 的 rpy 是固定軸 X→Y→Z,等價於 three.js 的內旋 'ZYX' 順序。
+   用錯順序在 roll/pitch 都非零時才會露餡,單軸旋轉看不出來 —— 很容易漏掉。 */
+function setRPY(o, r) { o.rotation.set(r[0], r[1], r[2], 'ZYX'); }
+
+/* ---------------- STL ---------------- */
+function parseSTL(buf) {
+  const dv = new DataView(buf);
+  if (buf.byteLength > 84) {
+    const n = dv.getUint32(80, true);
+    if (84 + n * 50 === buf.byteLength) {
+      const pos = new Float32Array(n * 9);
+      for (let i = 0; i < n; i++) {
+        const o = 84 + i * 50 + 12;
+        for (let v = 0; v < 9; v++) pos[i * 9 + v] = dv.getFloat32(o + v * 4, true);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.computeVertexNormals();
+      return g;
+    }
+  }
+  // ASCII fallback
+  const txt = new TextDecoder().decode(buf);
+  const nums = [];
+  const re = /vertex\s+(\S+)\s+(\S+)\s+(\S+)/g;
+  let m;
+  while ((m = re.exec(txt))) nums.push(+m[1], +m[2], +m[3]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nums), 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+const geomCache = new Map();
+async function assetGeometry(key) {
+  if (geomCache.has(key)) return geomCache.get(key);
+  const g = parseSTL(await (await fetch('/asset?k=' + key)).arrayBuffer());
+  geomCache.set(key, g);
+  return g;
+}
+
+/* ---------------- 建立機器人 ---------------- */
+async function buildRobot() {
+  const byChild = {};
+  MODEL.joints.forEach(j => byChild[j.child] = j);
+
+  // 從每個連桿往根節點走,把沿路的關節 origin 疊起來 = 世界變換。
+  // 這裡把所有可動關節都當成角度 0 —— 擺感測器只關心結構,不是模擬。
+  function worldOf(name, seen = new Set()) {
+    const o = new THREE.Object3D();
+    const chain = [];
+    let cur = name;
+    while (byChild[cur] && !seen.has(cur)) {
+      seen.add(cur);
+      chain.push(byChild[cur]);
+      cur = byChild[cur].parent;
+    }
+    const M = new THREE.Matrix4();
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const j = chain[i];
+      const t = new THREE.Object3D();
+      t.position.fromArray(j.xyz); setRPY(t, j.rpy); t.updateMatrix();
+      M.multiply(t.matrix);
+    }
+    M.decompose(o.position, o.quaternion, o.scale);
+    return o;
+  }
+
+  for (const L of MODEL.links) {
+    const g = worldOf(L.name);
+    scene.add(g);
+    linkObj[L.name] = g;
+    for (const v of L.visuals) {
+      let geom;
+      if (v.type === 'box') geom = new THREE.BoxGeometry(...v.size);
+      else if (v.type === 'cylinder')
+        geom = new THREE.CylinderGeometry(v.radius, v.radius, v.length, 28).rotateX(Math.PI/2);
+      else if (v.type === 'sphere') geom = new THREE.SphereGeometry(v.radius, 24, 16);
+      else if (v.type === 'mesh') geom = await assetGeometry(v.asset);
+      if (!geom) continue;
+      const c = v.color ? new THREE.Color(v.color[0], v.color[1], v.color[2])
+                        : new THREE.Color(0xb9c2ce);
+      const op = v.color && v.color[3] < 1 ? v.color[3] : 1;
+      const m = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
+        color: c, transparent: op < 1, opacity: op }));
+      m.position.fromArray(v.xyz); setRPY(m, v.rpy);
+      if (v.type === 'mesh' && v.scale) m.scale.fromArray(v.scale);
+      g.add(m);
+    }
+  }
+
+  const box = new THREE.Box3().setFromObject(scene);
+  const c = box.getCenter(new THREE.Vector3());
+  const r = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.5);
+  controls.target.copy(c);
+  camera.position.set(c.x + r * 1.1, c.y - r * 1.2, c.z + r * 0.9);
+  camera.far = r * 40; camera.updateProjectionMatrix();
+}
+
+/* ---------------- 感測器 ---------------- */
+function makeSensor(opt) {
+  const s = Object.assign({
+    name: 'sensor_' + (sensors.length + 1),
+    parent: MODEL.root,
+    xyz: [0, 0, 0], rpy: [0, 0, 0],
+    size: [0.06, 0.06, 0.06],
+    asset: null, assetName: null, scale: [1, 1, 1],
+    color: PALETTE[sensors.length % PALETTE.length],
+  }, opt || {});
+  s.obj = new THREE.Group();
+  s.mesh = null;
+  s.ax = new THREE.AxesHelper(0.2);
+  s.ax.material.depthTest = false; s.ax.renderOrder = 5;
+  s.obj.add(s.ax);
+  scene.add(s.obj);
+  sensors.push(s);
+  rebuildSensorMesh(s);
+  return s;
+}
+
+async function rebuildSensorMesh(s) {
+  if (s.mesh) { s.obj.remove(s.mesh); s.mesh = null; }
+  const geom = s.asset !== null ? await assetGeometry(s.asset)
+                                : new THREE.BoxGeometry(...s.size);
+  s.mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({ color: s.color }));
+  if (s.asset !== null) s.mesh.scale.fromArray(s.scale);
+  s.obj.add(s.mesh);
+  place(s);
+}
+
+function place(s) {
+  const p = linkObj[s.parent];
+  const M = new THREE.Matrix4();
+  if (p) { p.updateMatrix(); M.copy(p.matrix); }
+  const local = new THREE.Object3D();
+  local.position.fromArray(s.xyz); setRPY(local, s.rpy); local.updateMatrix();
+  M.multiply(local.matrix);
+  M.decompose(s.obj.position, s.obj.quaternion, s.obj.scale);
+}
+
+function refreshAll() { sensors.forEach(place); }
+
+/* ---------------- 介面 ---------------- */
+function fmt(v, n) { return Number(v).toFixed(n); }
+
+function renderList() {
+  const box = $('list'); box.innerHTML = '';
+  $('empty').style.display = sensors.length ? 'none' : '';
+  sensors.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 's' + (i === sel ? ' sel' : '');
+    el.innerHTML = `
+      <div class="hd">
+        <span class="sw" style="background:#${s.color.toString(16).padStart(6,'0')}"></span>
+        <b>${s.name}</b>
+        <button class="rm" data-rm="${i}">✕</button>
+      </div>
+      <div class="body">
+        <div class="g2">
+          <input data-k="name" value="${s.name}" placeholder="連桿名稱">
+          <select data-k="parent">${MODEL.links.map(l =>
+            `<option${l.name === s.parent ? ' selected' : ''}>${l.name}</option>`).join('')}</select>
+        </div>
+        ${s.asset === null ? `
+        <div class="g2">
+          <input data-k="sx" type="number" step="0.005" value="${fmt(s.size[0],3)}" title="長 X">
+          <input data-k="sy" type="number" step="0.005" value="${fmt(s.size[1],3)}" title="寬 Y">
+        </div>
+        <div class="g2">
+          <input data-k="sz" type="number" step="0.005" value="${fmt(s.size[2],3)}" title="高 Z">
+          <button data-stl="${i}">改用 STL</button>
+        </div>` : `
+        <div class="g2">
+          <input data-k="scale" type="number" step="0.1" value="${fmt(s.scale[0],3)}" title="縮放">
+          <button data-box="${i}">改回方塊</button>
+        </div>
+        <div class="note" style="margin:3px 0 0">mesh: ${s.assetName || '(匯入)'}</div>`}
+        <div class="f"><label>X</label>
+          <input type="range" data-k="x" min="-2" max="2" step="0.001" value="${s.xyz[0]}">
+          <input type="number" data-k="x" step="0.001" value="${fmt(s.xyz[0],4)}"></div>
+        <div class="f"><label>Y</label>
+          <input type="range" data-k="y" min="-2" max="2" step="0.001" value="${s.xyz[1]}">
+          <input type="number" data-k="y" step="0.001" value="${fmt(s.xyz[1],4)}"></div>
+        <div class="f"><label>Z</label>
+          <input type="range" data-k="z" min="-1" max="3" step="0.001" value="${s.xyz[2]}">
+          <input type="number" data-k="z" step="0.001" value="${fmt(s.xyz[2],4)}"></div>
+        <div class="f"><label>roll</label>
+          <input type="range" data-k="r" min="-180" max="180" step="0.5" value="${s.rpy[0]*R2D}">
+          <input type="number" data-k="r" step="0.5" value="${fmt(s.rpy[0]*R2D,1)}"></div>
+        <div class="f"><label>pitch</label>
+          <input type="range" data-k="p" min="-180" max="180" step="0.5" value="${s.rpy[1]*R2D}">
+          <input type="number" data-k="p" step="0.5" value="${fmt(s.rpy[1]*R2D,1)}"></div>
+        <div class="f"><label>yaw</label>
+          <input type="range" data-k="w" min="-180" max="180" step="0.5" value="${s.rpy[2]*R2D}">
+          <input type="number" data-k="w" step="0.5" value="${fmt(s.rpy[2]*R2D,1)}"></div>
+        <div class="row"><span>角度(弧度,URDF 用)</span><span>${
+          s.rpy.map(v => fmt(v,4)).join(' ')}</span></div>
+      </div>`;
+    el.querySelector('.hd').onclick = e => {
+      if (e.target.dataset.rm !== undefined) return;
+      sel = (sel === i ? -1 : i); renderList();
+    };
+    box.appendChild(el);
+  });
+
+  box.querySelectorAll('[data-rm]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const i = +e.target.dataset.rm;
+    scene.remove(sensors[i].obj);
+    sensors.splice(i, 1);
+    if (sel >= sensors.length) sel = sensors.length - 1;
+    renderList();
+  });
+  box.querySelectorAll('[data-stl]').forEach(b => b.onclick = () => {
+    importInto = +b.dataset.stl; $('file').click();
+  });
+  box.querySelectorAll('[data-box]').forEach(b => b.onclick = () => {
+    const s = sensors[+b.dataset.box];
+    s.asset = null; s.assetName = null;
+    rebuildSensorMesh(s); renderList();
+  });
+  box.querySelectorAll('[data-k]').forEach(el => {
+    el.oninput = e => {
+      const s = sensors[sel]; if (!s) return;
+      const k = e.target.dataset.k, val = e.target.value;
+      const f = parseFloat(val);
+      if (k === 'name') { s.name = val; return; }
+      if (k === 'parent') { s.parent = val; place(s); renderList(); return; }
+      if (!isFinite(f)) return;
+      if (k === 'x') s.xyz[0] = f; else if (k === 'y') s.xyz[1] = f;
+      else if (k === 'z') s.xyz[2] = f;
+      else if (k === 'r') s.rpy[0] = f * D2R; else if (k === 'p') s.rpy[1] = f * D2R;
+      else if (k === 'w') s.rpy[2] = f * D2R;
+      else if (k === 'sx') { s.size[0] = f; rebuildSensorMesh(s); }
+      else if (k === 'sy') { s.size[1] = f; rebuildSensorMesh(s); }
+      else if (k === 'sz') { s.size[2] = f; rebuildSensorMesh(s); }
+      else if (k === 'scale') { s.scale = [f, f, f]; s.mesh.scale.set(f, f, f); }
+      place(s);
+      // 只同步同一列的另一個輸入框,不整份重繪 —— 重繪會讓輸入游標跳掉
+      e.target.parentElement.querySelectorAll(`[data-k="${k}"]`).forEach(o => {
+        if (o !== e.target) o.value = (o.type === 'range') ? f : fmt(f, k.length === 1 && 'xyz'.includes(k) ? 4 : 1);
+      });
+    };
+  });
+  sensors.forEach((s, i) => { s.ax.visible = (i === sel); });
+}
+
+let importInto = -1;
+$('b-add').onclick = () => { makeSensor(); sel = sensors.length - 1; renderList(); };
+$('b-import').onclick = () => { importInto = -1; $('file').click(); };
+$('file').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  e.target.value = '';
+  const buf = await f.arrayBuffer();
+  const r = await (await fetch('/upload?name=' + encodeURIComponent(f.name),
+    { method: 'POST', body: buf })).json();
+  if (!r.ok) { msg('匯入失敗', 'bad'); return; }
+  let s;
+  if (importInto >= 0) s = sensors[importInto];
+  else { s = makeSensor({ name: f.name.replace(/\.stl$/i, '').replace(/\W+/g, '_') });
+         sel = sensors.length - 1; }
+  s.asset = r.key; s.assetName = f.name;
+  await rebuildSensorMesh(s);
+  importInto = -1;
+  renderList();
+  msg('已匯入 ' + f.name + ' —— STL 單位若是公釐,把縮放設成 0.001', 'ok');
+};
+
+function msg(t, kind) {
+  const e = $('msg');
+  e.textContent = t || '';
+  e.style.color = kind === 'bad' ? 'var(--bad)' : kind === 'ok' ? 'var(--ok)'
+                : kind === 'warn' ? 'var(--warn)' : 'var(--dim)';
+}
+
+$('b-export').onclick = async () => {
+  const out = $('out').value.trim();
+  if (!out) { msg('請填輸出資料夾', 'warn'); return; }
+  const names = sensors.map(s => s.name);
+  if (new Set(names).size !== names.length) { msg('感測器名稱重複', 'bad'); return; }
+  const payload = {
+    out_dir: out,
+    sensors: sensors.map(s => ({
+      name: s.name, parent: s.parent, xyz: s.xyz, rpy: s.rpy,
+      size: s.size, asset: s.asset, scale: s.scale,
+      color: [(s.color >> 16 & 255) / 255, (s.color >> 8 & 255) / 255, (s.color & 255) / 255],
+    }))
+  };
+  msg('匯出中…');
+  try {
+    const r = await (await fetch('/export', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload) })).json();
+    if (!r.ok) { msg('匯出失敗:' + r.err, 'bad'); $('done').textContent = ''; return; }
+    msg('完成', 'ok');
+    $('done').innerHTML = `<b>${r.dir}</b><br>` + r.files.map(f => '· ' + f).join('<br>');
+  } catch (e) { msg('匯出失敗:' + e, 'bad'); }
+};
+
+/* ---------------- 啟動 ---------------- */
+(async function init() {
+  MODEL = await (await fetch('/model.json')).json();
+  $('src').innerHTML = `<b>${MODEL.name}</b><br>${MODEL.path}<br>` +
+    `連桿 ${MODEL.links.length} · 關節 ${MODEL.joints.length} · 根 ${MODEL.root}`;
+  await buildRobot();
+  renderList();
+  resize();
+})();
+
+function resize() {
+  const w = innerWidth - 372, h = innerHeight;
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+addEventListener('resize', resize);
+(function loop() {
+  requestAnimationFrame(loop);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

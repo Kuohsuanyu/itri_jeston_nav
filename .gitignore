@@ -1,0 +1,37 @@
+# ── 第三方原始碼:不進版控,要用就重 clone ────────────────────────
+# reference/robot_localization 是從 upstream clone 的,35 MB 裡有 25 MB 是
+# test/*.bag 測試資料。我們一行都沒改過,純粹拿來查 EKF 怎麼實作的。
+#   git clone --depth 1 -b humble-devel \
+#     https://github.com/cra-ros-pkg/robot_localization.git reference/robot_localization
+reference/
+
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ── 備份與暫存 ─────────────────────────────────────────────────
+# place_tool 和各種校準腳本會自動備份成 *.bak.<時間戳>,那些是保險不是版本
+*.bak
+*.bak.*
+*.orig
+*.tmp
+*~
+urdf/backup/
+
+# ── 執行期產物 ─────────────────────────────────────────────────
+# qbot_view.xacro 由 gen_view_urdf.py 從 robot_tf.sh 產生,不該手改也不該進版控
+wsl/qbot_view.xacro
+*.pgm
+*.log
+
+# ── 作業系統 ───────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ── 編輯器 ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp

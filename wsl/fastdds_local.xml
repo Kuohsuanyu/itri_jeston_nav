@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  WSL 端 Fast DDS 設定 —— zenoh 版本
+
+  跟舊的 fastdds_unicast.xml 差在:**沒有 initialPeersList**。
+
+  改用 zenoh bridge 之後,WSL 的 DDS 只需要在本機說話
+  (zenoh-bridge-ros2dds <-> RViz2,兩個都在 WSL 內),
+  跨機那一段由 zenoh 的 TCP 連線負責。
+
+  舊檔把 Jetson 寫進 initialPeersList,是為了繞開 multicast 探索;
+  現在再留著只會讓 WSL 的 DDS 繼續對 Jetson 送探索封包,
+  白白佔用那條已經證實會衰減的 UDP 路徑,所以拿掉。
+
+  socket 緩衝仍然要放大:/cloud_registered 每則約 0.40 MB,
+  就算只在本機 loopback 上傳,預設緩衝一樣裝不下。
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+
+    <participant profile_name="lidar_local" is_default_profile="true">
+      <rtps>
+        <sendSocketBufferSize>8388608</sendSocketBufferSize>
+        <listenSocketBufferSize>8388608</listenSocketBufferSize>
+        <useBuiltinTransports>true</useBuiltinTransports>
+      </rtps>
+    </participant>
+
+  </profiles>
+</dds>

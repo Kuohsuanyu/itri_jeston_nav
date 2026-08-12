@@ -1,0 +1,25 @@
+# 車體機型註冊表 — 新增機型時只需在此加一筆，launch 檔不必修改。
+#
+#   xacro         : chassis_description/urdf/ 下的檔名
+#   rviz          : chassis_description/rviz/ 下的檔名（display.launch.py 使用）
+#   vehicle_param : chassis_bringup/config/ 下的檔名（bringup.launch.py 使用）
+#   description   : 人類可讀的機型說明
+#
+# 用法：
+#   ros2 launch chassis_description display.launch.py model:=DD-M-HH
+#   ros2 launch chassis_bringup     bringup.launch.py model:=DD-M-HH
+
+default_model: DD-M
+
+models:
+  DD-M:
+    xacro: chassis_DD-M.xacro
+    rviz: static_view.rviz
+    vehicle_param: vehicle_param_DD-M.yaml
+    description: 差速式四輪底盤，標準車身
+
+  DD-M-HH:
+    xacro: chassis_DD-M-HH.xacro
+    rviz: static_view.rviz
+    vehicle_param: vehicle_param_DD-M-HH.yaml
+    description: DD-M 加高車身衍生型（噴藥車底盤），軸距 0.56 m

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  WSL 端 Fast DDS 設定
+
+  兩個目的:
+
+  1. initialPeersList —— 直接把 Jetson 的位址寫死,探索走 unicast。
+     WiFi 的 AP 對 multicast 常常降速或丟棄,不能只靠 multicast 探索。
+
+  2. 放大 socket 緩衝 —— 這是 /cloud_registered 能不能過來的關鍵。
+     每則 0.36 MB,遠超過單一 UDP datagram(64KB)上限,必須拆成數十片傳送。
+     Fast DDS 預設的 socket 緩衝裝不下,分片還沒收齊就被覆蓋掉,
+     結果是「小訊息(Odometry)正常,大訊息(點雲)完全收不到」—— 實測就是這個症狀。
+
+  注意 useBuiltinTransports 保持 true。
+  之前試過用自訂 UDP transport 取代內建的,結果本機節點之間也連不上。
+  這裡只調參數,不換 transport。
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+
+    <participant profile_name="lidar_participant" is_default_profile="true">
+      <rtps>
+        <!-- 8 MB,足夠容納整則點雲的所有分片 -->
+        <sendSocketBufferSize>8388608</sendSocketBufferSize>
+        <listenSocketBufferSize>8388608</listenSocketBufferSize>
+
+        <useBuiltinTransports>true</useBuiltinTransports>
+
+        <builtin>
+          <initialPeersList>
+            <locator>
+              <udpv4>
+                <address>192.168.40.98</address>
+              </udpv4>
+            </locator>
+          </initialPeersList>
+        </builtin>
+      </rtps>
+    </participant>
+
+  </profiles>
+</dds>

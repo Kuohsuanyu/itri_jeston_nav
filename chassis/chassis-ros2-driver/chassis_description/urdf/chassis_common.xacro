@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Shared building blocks for every chassis model.
+
+  A model xacro (chassis_<MODEL>.xacro) is expected to:
+    1. <xacro:include filename="$(find chassis_description)/urdf/chassis_common.xacro" />
+    2. declare its own base_link (geometry + inertia + mesh)
+    3. call xacro:base_footprint once and xacro:wheel four times
+
+  Nothing here is model specific — all geometry and calibration values live in
+  the model xacro, so adding a model never requires touching this file.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ═══════════════════════════════════════════
+       Base footprint link
+       params:
+         wheel_radius — wheel radius (m)
+         wheel_z      — wheel axis height in base_link frame (m)
+  ══════════════════════════════════════════════ -->
+  <xacro:macro name="base_footprint" params="wheel_radius wheel_z">
+    <link name="base_footprint"/>
+
+    <joint name="base_footprint_joint" type="fixed">
+      <parent link="base_footprint" />
+      <child  link="base_link" />
+      <origin xyz="0 0 ${wheel_radius - wheel_z}" rpy="0 0 0" />
+    </joint>
+  </xacro:macro>
+
+  <!-- ═══════════════════════════════════════════
+       Wheel macro
+       params:
+         mesh_dir  — mesh sub-directory under meshes/ (e.g. DD-M)
+         name      — prefix used for link/joint/mesh names (e.g. front_left)
+         x         — joint origin X
+         y         — joint origin Y (positive = left)
+         z         — joint origin Z (wheel axis height)
+         axis_y    — spin axis Y component: +1 for left wheels, -1 for right
+         mass      — wheel mass (kg)
+         ixx       — ixx = izz moment of inertia (kg·m²)
+         iyy       — iyy spin-axis moment of inertia (kg·m²)
+         com_y     — centre-of-mass Y offset from joint origin (m)
+         color     — "r g b" string for visual colour
+         joint_rpy — joint origin orientation (default: "0 0 0")
+  ══════════════════════════════════════════════ -->
+  <xacro:macro name="wheel"
+               params="mesh_dir name x y z axis_y mass ixx iyy com_y color joint_rpy:='0 0 0'">
+    <link name="wheel_${name}_link">
+      <inertial>
+        <origin xyz="0 ${com_y} 0" rpy="0 0 0" />
+        <mass value="${mass}" />
+        <inertia
+          ixx="${ixx}"  ixy="0" ixz="0"
+          iyy="${iyy}"  iyz="0"
+          izz="${ixx}" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://chassis_description/meshes/${mesh_dir}/wheel_${name}_link.STL" />
+        </geometry>
+        <material name="wheel_${name}_color">
+          <color rgba="${color} 1" />
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://chassis_description/meshes/${mesh_dir}/wheel_${name}_link.STL" />
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="wheel_${name}_joint" type="continuous">
+      <origin xyz="${x} ${y} ${z}" rpy="${joint_rpy}" />
+      <parent link="base_link" />
+      <child  link="wheel_${name}_link" />
+      <axis xyz="0 ${axis_y} 0" />
+    </joint>
+  </xacro:macro>
+
+</robot>

@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>感測器位置與角度設定</title>
+<style>
+  :root{--bg:#0a0e15;--panel:rgba(17,23,33,.95);--line:rgba(120,160,220,.18);
+        --fg:#dde6f3;--dim:#7e8ea5;--accent:#4ea1ff;--ok:#39d98a;--warn:#ffc857;--bad:#ff5f6d}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);overflow:hidden;
+    font:13px/1.55 ui-monospace,"Cascadia Mono",Consolas,monospace}
+  #view{position:fixed;inset:0 356px 0 0}
+  canvas{display:block}
+  #side{position:fixed;top:0;right:0;bottom:0;width:356px;background:var(--panel);
+    border-left:1px solid var(--line);padding:14px;overflow-y:auto}
+  h1{margin:0 0 3px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--accent);font-weight:600}
+  h2{margin:0 0 6px;font-size:11px;letter-spacing:.10em;text-transform:uppercase;
+    color:var(--dim);font-weight:600}
+  .note{color:var(--dim);font-size:11px;line-height:1.7;margin:0 0 10px}
+  hr{border:0;border-top:1px solid var(--line);margin:13px 0}
+  .btns{display:flex;gap:6px;margin:8px 0}
+  button{flex:1;background:rgba(78,161,255,.10);color:var(--fg);border:1px solid var(--line);
+    border-radius:7px;padding:7px 5px;cursor:pointer;font:inherit;font-size:11px}
+  button:hover{background:rgba(78,161,255,.24);border-color:var(--accent)}
+  button.on{background:var(--accent);color:#04101f;font-weight:600}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button.go{background:rgba(57,217,138,.14);border-color:rgba(57,217,138,.4)}
+  button.go:hover:not(:disabled){background:var(--ok);color:#04101f;font-weight:600}
+
+  .f{display:grid;grid-template-columns:52px 1fr 92px;align-items:center;gap:7px;margin:5px 0}
+  .f label{color:var(--dim);font-size:11px}
+  .f input[type=number]{background:#060a10;border:1px solid var(--line);border-radius:5px;
+    color:var(--fg);padding:4px 6px;font:inherit;font-size:12px;width:100%;
+    font-variant-numeric:tabular-nums}
+  .f input[type=number]:focus{outline:none;border-color:var(--accent)}
+  .f input[type=range]{width:100%;accent-color:var(--accent);height:3px}
+  .f .u{color:var(--dim);font-size:10px;text-align:right}
+  .dirty input[type=number]{border-color:var(--warn)}
+
+  .rd{border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-top:9px;
+    background:rgba(78,161,255,.05)}
+  .row{display:flex;justify-content:space-between;padding:2px 0;font-size:12px}
+  .row span:first-child{color:var(--dim)}
+  .row b{font-weight:600;font-variant-numeric:tabular-nums}
+
+  details{margin-top:4px}
+  summary{cursor:pointer;color:var(--accent);font-size:11px;padding:4px 0;
+    list-style:none;user-select:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸ ";}
+  details[open] summary::before{content:"▾ ";}
+  .c{border:1px solid var(--line);border-radius:7px;padding:8px 9px;margin:6px 0;
+    background:rgba(78,161,255,.05)}
+  .c .hd{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .c .nm{color:var(--accent);font-size:11px}
+  .c .rm{flex:none;width:22px;padding:2px;font-size:12px;line-height:1;background:none;
+    border-color:transparent;color:var(--dim)}
+  .c .rm:hover{color:var(--bad);border-color:var(--line)}
+  .c .ax{color:var(--dim);font-size:10px;margin:3px 0 5px}
+  .c input{width:100%;background:#060a10;border:1px solid var(--line);border-radius:5px;
+    color:var(--fg);padding:4px 6px;font:inherit;font-size:12px}
+  #msg{font-size:11px;min-height:17px;margin-top:6px}
+  .hint{position:fixed;left:14px;bottom:12px;color:var(--dim);font-size:11px;
+    line-height:1.7;opacity:.8;pointer-events:none}
+  kbd{background:rgba(120,160,220,.15);border:1px solid var(--line);border-radius:3px;
+    padding:0 4px;font-size:10px}
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div class="hint">
+  左鍵拖曳 旋轉 &nbsp;·&nbsp; 右鍵 平移 &nbsp;·&nbsp; 滾輪 縮放<br>
+  紅綠藍三軸 = 感測器的 X / Y / Z 方向,調角度時看著它
+</div>
+
+<div id="side">
+  <h1>感測器設定</h1>
+  <div class="btns">
+    <button id="t-lidar" class="on">光達</button>
+    <button id="t-cam">相機</button>
+  </div>
+
+  <hr>
+  <h2>位置 (公尺,相對 base_link)</h2>
+  <div class="f" id="f-X"><label>X 前後</label>
+    <input type="range" data-k="X" min="-0.6" max="0.6" step="0.001">
+    <input type="number" data-k="X" step="0.001"></div>
+  <div class="f" id="f-Y"><label>Y 左右</label>
+    <input type="range" data-k="Y" min="-0.4" max="0.4" step="0.001">
+    <input type="number" data-k="Y" step="0.001"></div>
+  <div class="f" id="f-Z"><label>Z 上下</label>
+    <input type="range" data-k="Z" min="0" max="1.2" step="0.001">
+    <input type="number" data-k="Z" step="0.001"></div>
+
+  <h2 style="margin-top:14px">角度 (度)</h2>
+  <div class="f" id="f-ROLL"><label>roll</label>
+    <input type="range" data-k="ROLL" min="-90" max="90" step="0.5">
+    <input type="number" data-k="ROLL" step="0.5"></div>
+  <div class="f" id="f-PITCH"><label>pitch</label>
+    <input type="range" data-k="PITCH" min="-90" max="90" step="0.5">
+    <input type="number" data-k="PITCH" step="0.5"></div>
+  <div class="f" id="f-YAW"><label>yaw</label>
+    <input type="range" data-k="YAW" min="-180" max="180" step="0.5">
+    <input type="number" data-k="YAW" step="0.5"></div>
+  <p class="note" style="margin:6px 0 0">
+    pitch 正值 = 往下低頭。xacro 存的是弧度,這裡輸入度,寫入時自動換算。</p>
+
+  <div class="rd">
+    <div class="row"><span>離地</span><b id="r-g">—</b></div>
+    <div class="row"><span>盒頂起算</span><b id="r-b">—</b></div>
+    <div class="row"><span>xacro 弧度值</span><b id="r-rad">—</b></div>
+  </div>
+
+  <details id="meas">
+    <summary>用基準面量出位置</summary>
+    <p class="note">點車體上的平面選基準,輸入垂直距離(往面外為正)。
+    三個方向不平行的量測就解出 X / Y / Z,填進上面的欄位。
+    按住 <kbd>Shift</kbd> 點擊可一次選相鄰兩個面。</p>
+    <div id="cons"></div>
+    <div class="btns">
+      <button id="b-clear">清除量測</button>
+      <button id="b-apply" disabled>套用到欄位</button>
+    </div>
+  </details>
+
+  <div id="msg"></div>
+  <div class="btns">
+    <button id="b-reset">放棄變更</button>
+    <button id="b-write" class="go" disabled>寫入 光達</button>
+  </div>
+  <div class="btns" style="margin-top:0">
+    <button id="b-undo" disabled>↶ 復原上一次寫入</button>
+  </div>
+  <div class="note" id="undo-info" style="margin:2px 0 0"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './vendor/OrbitControls.js';
+
+const $ = id => document.getElementById(id);
+const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+const KEYS = ['X','Y','Z','ROLL','PITCH','YAW'];
+const ANG = k => k === 'ROLL' || k === 'PITCH' || k === 'YAW';
+
+/* ---------------- 場景 ---------------- */
+const view = $('view');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e15);
+const camera = new THREE.PerspectiveCamera(48, 1, 0.02, 100);
+camera.up.set(0, 0, 1);
+camera.position.set(1.4, -1.5, 1.1);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+view.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+controls.target.set(0, 0, 0.4);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.72));
+const k1 = new THREE.DirectionalLight(0xffffff, 0.85); k1.position.set(2, -3, 4);
+const k2 = new THREE.DirectionalLight(0x88aaff, 0.35); k2.position.set(-3, 2, 1);
+scene.add(k1, k2);
+const grid = new THREE.GridHelper(6, 24, 0x2c3c52, 0x18222f);
+grid.rotation.x = Math.PI / 2;
+scene.add(grid);
+
+/* ---------------- 狀態 ---------------- */
+let P = {}, BF = 0.2032, BOX_TOP = 0.4110;
+let target = 'LIDAR';
+let cur = {};        // 目前編輯中的值(角度以「度」儲存)
+let saved = {};      // 上次從 xacro 讀到的值,用來判斷有沒有改過
+
+const pickable = [];
+const stl = new THREE.Group();
+scene.add(stl);
+
+/* ---------------- 感測器預覽 ---------------- */
+// 兩個感測器都常駐在場景裡。編輯中的那個用實心 + 三軸,另一個半透明 ——
+// 這樣調角度的時候看得到兩者的相對關係,不會把相機調到穿進光達裡。
+function makeSensor(kind) {
+  const g = new THREE.Group();
+  const geom = kind === 'LIDAR'
+    ? new THREE.CylinderGeometry(0.033, 0.033, 0.062, 28).rotateX(Math.PI / 2)
+    : new THREE.BoxGeometry(0.025, 0.090, 0.025);
+  // 不要一開始就設 transparent:true。three.js 只看這個旗標決定物件進不進
+  // 透明渲染批次,跟 opacity 是不是 1 無關 —— 進了批次就會跟旁邊半透明的
+  // 輪子互相排序,看起來霧霧的。透明與否改成跟著 opacity 動態切換。
+  const mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
+    color: kind === 'LIDAR' ? 0x2b2b33 : 0x1a5a99 }));
+  g.add(mesh);
+  const ax = new THREE.AxesHelper(0.22);      // 紅=X 綠=Y 藍=Z
+  ax.material.depthTest = false;
+  ax.renderOrder = 5;
+  g.add(ax);
+  // 朝向指示:感測器自己的 +X。光達俯 30 度的時候,這根會明顯往下指。
+  const dir = new THREE.Mesh(
+    new THREE.ConeGeometry(0.018, 0.06, 16).rotateZ(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xffc857 }));
+  dir.position.x = 0.16;
+  g.add(dir);
+  g.userData = { mesh, ax, dir };
+  scene.add(g);
+  return g;
+}
+const SENSOR = { LIDAR: makeSensor('LIDAR'), CAM: makeSensor('CAM') };
+
+function applyPreview() {
+  for (const t of ['LIDAR', 'CAM']) {
+    const g = SENSOR[t];
+    const v = (t === target) ? cur : readSaved(t);
+    g.position.set(v.X, v.Y, v.Z);
+    // URDF 的 rpy 是固定軸 XYZ 順序 = three.js 的內旋 'ZYX'
+    g.rotation.set(v.ROLL * D2R, v.PITCH * D2R, v.YAW * D2R, 'ZYX');
+    const active = t === target;
+    const m = g.userData.mesh.material;
+    const op = active ? 1 : 0.45;
+    if (m.transparent !== (op < 1)) {
+      m.transparent = op < 1;
+      m.depthWrite = op >= 1;
+      m.needsUpdate = true;      // 切換 transparent 一定要重編 shader
+    }
+    m.opacity = op;
+    g.userData.ax.visible = active;
+    g.userData.dir.visible = active;
+  }
+}
+
+function readSaved(t) {
+  const o = {};
+  for (const k of KEYS) {
+    const raw = parseFloat(P[t + '_' + k]);
+    o[k] = ANG(k) ? raw * R2D : raw;
+  }
+  return o;
+}
+
+/* ---------------- 欄位 ---------------- */
+function syncInputs() {
+  for (const k of KEYS) {
+    const v = cur[k];
+    document.querySelectorAll(`[data-k="${k}"]`).forEach(el => {
+      el.value = ANG(k) ? v.toFixed(1) : v.toFixed(4);
+    });
+    $('f-' + k).classList.toggle('dirty', Math.abs(v - saved[k]) > 1e-6);
+  }
+  const dirty = KEYS.some(k => Math.abs(cur[k] - saved[k]) > 1e-6);
+  $('b-write').disabled = !dirty;
+  $('r-g').textContent = (cur.Z + BF).toFixed(4) + ' m';
+  $('r-b').textContent = (cur.Z - BOX_TOP).toFixed(4) + ' m';
+  $('r-rad').textContent =
+    `${(cur.ROLL*D2R).toFixed(4)} ${(cur.PITCH*D2R).toFixed(4)} ${(cur.YAW*D2R).toFixed(4)}`;
+  applyPreview();
+}
+
+document.querySelectorAll('[data-k]').forEach(el => {
+  el.addEventListener('input', e => {
+    const k = e.target.dataset.k;
+    const v = parseFloat(e.target.value);
+    if (!isFinite(v)) return;
+    cur[k] = v;
+    syncInputs();
+  });
+});
+
+function loadTarget() {
+  saved = readSaved(target);
+  cur = Object.assign({}, saved);
+  syncInputs();
+}
+
+function msg(t, kind) {
+  const e = $('msg');
+  e.textContent = t || '';
+  e.style.color = kind === 'warn' ? 'var(--warn)' : kind === 'bad' ? 'var(--bad)'
+                 : kind === 'ok' ? 'var(--ok)' : 'var(--dim)';
+}
+
+/* ---------------- STL 與基準面 ---------------- */
+function parseSTL(buf) {
+  const dv = new DataView(buf);
+  const n = dv.getUint32(80, true);
+  if (84 + n * 50 !== buf.byteLength) throw new Error('只支援 binary STL');
+  const pos = new Float32Array(n * 9);
+  for (let i = 0; i < n; i++) {
+    const o = 84 + i * 50 + 12;
+    for (let v = 0; v < 9; v++) pos[i * 9 + v] = dv.getFloat32(o + v * 4, true);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+function buildAdjacency(geom) {
+  const pos = geom.attributes.position.array, nt = pos.length / 9;
+  const map = new Map();
+  const key = (a, b) => {
+    const ka = a.map(v => Math.round(v * 1e4)).join(',');
+    const kb = b.map(v => Math.round(v * 1e4)).join(',');
+    return ka < kb ? ka + '|' + kb : kb + '|' + ka;
+  };
+  for (let t = 0; t < nt; t++) {
+    const v = [];
+    for (let i = 0; i < 3; i++) v.push([pos[t*9+i*3], pos[t*9+i*3+1], pos[t*9+i*3+2]]);
+    for (let i = 0; i < 3; i++) {
+      const kk = key(v[i], v[(i + 1) % 3]);
+      if (!map.has(kk)) map.set(kk, []);
+      map.get(kk).push(t);
+    }
+  }
+  const adj = Array.from({ length: nt }, () => []);
+  for (const ts of map.values())
+    for (let i = 0; i < ts.length; i++)
+      for (let j = i + 1; j < ts.length; j++) { adj[ts[i]].push(ts[j]); adj[ts[j]].push(ts[i]); }
+  geom.userData.adj = adj;
+  return adj;
+}
+
+function triNormal(pos, t) {
+  const a = new THREE.Vector3(pos[t*9], pos[t*9+1], pos[t*9+2]);
+  const b = new THREE.Vector3(pos[t*9+3], pos[t*9+4], pos[t*9+5]);
+  const c = new THREE.Vector3(pos[t*9+6], pos[t*9+7], pos[t*9+8]);
+  return { n: new THREE.Vector3().subVectors(b, a)
+      .cross(new THREE.Vector3().subVectors(c, a)).normalize(), a };
+}
+
+// 同時比對法線方向和到平面的距離。只看法線的話,上蓋和底板會被判成
+// 同一個面 —— 平行,但差 30 公分。
+const NORMAL_TOL = 0.02, PLANE_TOL = 0.0015;
+
+function growFace(mesh, tri) {
+  const geom = mesh.geometry, pos = geom.attributes.position.array;
+  const adj = geom.userData.adj || buildAdjacency(geom);
+  const { n, a } = triNormal(pos, tri);
+  const d = n.dot(a);
+  const seen = new Set([tri]), stack = [tri];
+  while (stack.length) {
+    for (const q of adj[stack.pop()]) {
+      if (seen.has(q)) continue;
+      const r = triNormal(pos, q);
+      if (1 - Math.abs(r.n.dot(n)) > NORMAL_TOL) continue;
+      if (Math.abs(r.n.dot(r.a) * Math.sign(r.n.dot(n)) - d) > PLANE_TOL) continue;
+      seen.add(q); stack.push(q);
+    }
+  }
+  return { tris: seen, n: n.clone(), d: d + n.z * mesh.position.z, mesh };
+}
+
+/* ---------------- 量測約束 ---------------- */
+const constraints = [];
+
+function axisLabel(n) {
+  const ax = [['X 前後', Math.abs(n.x)], ['Y 左右', Math.abs(n.y)], ['Z 上下', Math.abs(n.z)]];
+  ax.sort((a, b) => b[1] - a[1]);
+  return ax[0][1] > 0.995 ? ax[0][0]
+       : `斜面 (${n.x.toFixed(2)}, ${n.y.toFixed(2)}, ${n.z.toFixed(2)})`;
+}
+
+function addConstraint(face) {
+  if (constraints.length >= 3) { msg('已經有 3 個量測,先刪掉一個', 'warn'); return; }
+  for (const c of constraints)
+    if (1 - Math.abs(c.n.dot(face.n)) < 0.02) {
+      msg('這個面跟已選的平行,提供不了新資訊', 'warn'); return;
+    }
+  constraints.push({ n: face.n.clone(), d: face.d, dist: 0, touched: false,
+                     name: axisLabel(face.n) });
+  $('meas').open = true;
+  renderCons();
+}
+
+function solve() {
+  if (constraints.length < 3 || !constraints.every(c => c.touched)) return null;
+  const A = constraints.map(c => [c.n.x, c.n.y, c.n.z]);
+  const b = constraints.map(c => c.d + c.dist);
+  const det = m =>
+      m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])
+    - m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])
+    + m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+  const Dt = det(A);
+  if (Math.abs(Dt) < 1e-4) return { bad: true };
+  const sub = i => A.map((r, kk) => r.map((v, j) => j === i ? b[kk] : v));
+  return { x: det(sub(0)) / Dt, y: det(sub(1)) / Dt, z: det(sub(2)) / Dt };
+}
+
+function renderCons() {
+  const box = $('cons');
+  box.innerHTML = '';
+  constraints.forEach((c, i) => {
+    const el = document.createElement('div');
+    el.className = 'c';
+    el.innerHTML = `
+      <div class="hd"><span class="nm">量測 ${i + 1}</span>
+        <button class="rm" data-i="${i}">✕</button></div>
+      <div class="ax">${c.name} · 基準面 @ ${c.d.toFixed(4)} m</div>
+      <input type="number" step="0.001" placeholder="距離 (m),往面外為正"
+             value="${c.touched ? c.dist : ''}" data-i="${i}">`;
+    box.appendChild(el);
+  });
+  box.querySelectorAll('input').forEach(inp => {
+    inp.oninput = e => {
+      const c = constraints[+e.target.dataset.i];
+      const v = parseFloat(e.target.value);
+      c.dist = isFinite(v) ? v : 0;
+      c.touched = e.target.value !== '';
+      checkSolve();
+    };
+  });
+  box.querySelectorAll('.rm').forEach(b => {
+    b.onclick = e => { constraints.splice(+e.target.dataset.i, 1); renderCons(); };
+  });
+  checkSolve();
+}
+
+let solved = null;
+function checkSolve() {
+  solved = solve();
+  if (!solved) { $('b-apply').disabled = true; return; }
+  if (solved.bad) {
+    $('b-apply').disabled = true;
+    msg('三個面幾乎共軸,解不出唯一位置', 'bad');
+    solved = null; return;
+  }
+  $('b-apply').disabled = false;
+  msg('量測完成,按「套用到欄位」把 X/Y/Z 填進去', 'ok');
+}
+
+$('b-apply').onclick = () => {
+  if (!solved) return;
+  cur.X = solved.x; cur.Y = solved.y; cur.Z = solved.z;
+  syncInputs();
+  // 量測用完就清掉 —— 留著只會擋畫面,而且下一個感測器的基準通常不一樣
+  constraints.length = 0;
+  renderCons();
+  $('meas').open = false;
+  msg('已套用。角度另外調,然後按寫入。', 'ok');
+};
+$('b-clear').onclick = () => { constraints.length = 0; renderCons(); msg(''); };
+
+/* ---------------- 點選 ---------------- */
+const ray = new THREE.Raycaster();
+let down = null;
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (e.button === 0) down = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener('pointerup', ev => {
+  if (ev.button !== 0 || !down) return;
+  if (Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 4) { down = null; return; }
+  down = null;
+  const r = renderer.domElement.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2(
+    ((ev.clientX - r.left) / r.width) * 2 - 1,
+    -((ev.clientY - r.top) / r.height) * 2 + 1), camera);
+  const hits = ray.intersectObjects(pickable, false);
+  if (!hits.length) return;
+  const face = growFace(hits[0].object, hits[0].faceIndex);
+  addConstraint(face);
+  if (ev.shiftKey) {
+    const o = neighbourFace(hits[0].object, face, hits[0].point);
+    if (o) addConstraint(o);
+  }
+});
+
+function neighbourFace(mesh, face, point) {
+  const pos = mesh.geometry.attributes.position.array;
+  const adj = mesh.geometry.userData.adj;
+  let best = null, bestD = Infinity;
+  for (const t of face.tris) for (const q of adj[t]) {
+    if (face.tris.has(q)) continue;
+    const r = triNormal(pos, q);
+    if (1 - Math.abs(r.n.dot(face.n)) < 0.05) continue;
+    const c = new THREE.Vector3(
+      (pos[q*9] + pos[q*9+3] + pos[q*9+6]) / 3,
+      (pos[q*9+1] + pos[q*9+4] + pos[q*9+7]) / 3,
+      (pos[q*9+2] + pos[q*9+5] + pos[q*9+8]) / 3 + mesh.position.z);
+    const d = c.distanceTo(point);
+    if (d < bestD) { bestD = d; best = q; }
+  }
+  return best === null ? null : growFace(mesh, best);
+}
+
+/* ---------------- 按鈕 ---------------- */
+function setTarget(t) {
+  target = t;
+  $('t-lidar').classList.toggle('on', t === 'LIDAR');
+  $('t-cam').classList.toggle('on', t === 'CAM');
+  $('b-write').textContent = '寫入 ' + (t === 'LIDAR' ? '光達' : '相機');
+  constraints.length = 0; renderCons();
+  loadTarget();
+  msg('');
+}
+$('t-lidar').onclick = () => setTarget('LIDAR');
+$('t-cam').onclick = () => setTarget('CAM');
+$('b-reset').onclick = () => { loadTarget(); msg('已還原成 xacro 裡的值'); };
+
+$('b-write').onclick = async () => {
+  const body = {};
+  for (const k of KEYS) body[target + '_' + k] = ANG(k) ? cur[k] * D2R : cur[k];
+  try {
+    const r = await (await fetch('/write', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body) })).json();
+    if (!r.ok) { msg('寫入失敗:' + r.err, 'bad'); return; }
+    msg('已寫入 ' + (target === 'LIDAR' ? '光達' : '相機'), 'ok');
+    await loadParams();
+    loadTarget();
+  } catch (e) { msg('寫入失敗:' + e, 'bad'); }
+};
+
+$('b-undo').onclick = async () => {
+  try {
+    const r = await (await fetch('/undo', { method: 'POST' })).json();
+    if (!r.ok) { msg('復原失敗:' + r.err, 'bad'); return; }
+    msg('已復原 ' + r.changed.join('  '), 'ok');
+    await loadParams();
+    loadTarget();
+  } catch (e) { msg('復原失敗:' + e, 'bad'); }
+};
+
+function refreshUndo() {
+  const n = P._undo_n || 0;
+  $('b-undo').disabled = n === 0;
+  $('b-undo').textContent = n ? `↶ 復原上一次寫入 (${n})` : '↶ 沒有可復原的步驟';
+  $('undo-info').textContent = P._undo_label ? '會還原成:' + P._undo_label : '';
+}
+
+/* ---------------- 載入 ---------------- */
+async function loadParams() {
+  P = await (await fetch('/params.json?t=' + Date.now())).json();
+  BF = parseFloat(P.wheel_radius) - parseFloat(P.wheel_z || '0');
+  BOX_TOP = parseFloat(P.PLATE_Z) + parseFloat(P.BOX_H);
+  refreshUndo();
+}
+
+async function addSTL(name, color, z, opacity, canPick) {
+  const g = parseSTL(await (await fetch('/mesh/' + name)).arrayBuffer());
+  if (canPick) buildAdjacency(g);
+  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
+    color, transparent: opacity < 1, opacity }));
+  m.position.z = z;
+  stl.add(m);
+  if (canPick) pickable.push(m);
+  return m;
+}
+
+(async function init() {
+  await loadParams();
+  await addSTL('base_link.STL', 0xb9c2ce, 0, 1, true);
+
+  for (const [f, x, y] of [
+      ['wheel_front_left_link.STL',  0.275,  0.31105],
+      ['wheel_front_right_link.STL', 0.275, -0.31105],
+      ['wheel_rear_left_link.STL',  -0.275,  0.31105],
+      ['wheel_rear_right_link.STL', -0.275, -0.31105]]) {
+    const g = parseSTL(await (await fetch('/mesh/' + f)).arrayBuffer());
+    const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
+      color: 0x555c66, transparent: true, opacity: 0.5 }));
+    m.position.set(x, y, 0);
+    stl.add(m);
+  }
+
+  const bl = parseFloat(P.BOX_L), bw = parseFloat(P.BOX_W), bh = parseFloat(P.BOX_H);
+  const bg = new THREE.BoxGeometry(bl, bw, bh).toNonIndexed();
+  buildAdjacency(bg);
+  const box = new THREE.Mesh(bg, new THREE.MeshLambertMaterial({ color: 0x3d434c }));
+  box.position.z = parseFloat(P.PLATE_Z) + bh / 2;
+  stl.add(box);
+  pickable.push(box);
+
+  setTarget('LIDAR');
+  renderCons();
+  resize();
+})();
+
+function resize() {
+  const w = innerWidth - 356, h = innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+addEventListener('resize', resize);
+
+(function loop() {
+  requestAnimationFrame(loop);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

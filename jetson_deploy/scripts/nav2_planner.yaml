@@ -1,0 +1,93 @@
+# 只做「全域路徑規劃」的 Nav2 子集。
+#
+# 沒有 controller_server / bt_navigator / behavior_server —— 那些是為了驅動輪子。
+# 這裡只要回答「從現在的位置到你點的目標,路線怎麼走」,所以:
+#   planner_server(內含 global_costmap)+ lifecycle_manager 就夠了。
+#
+# 定位來自 slam_toolbox 的 map -> odom,不需要 AMCL。
+
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      # tolerance:目標點若落在障礙上,允許改用這個半徑內最近的可行點。
+      # 手動點選難免點到牆邊,設 0.5 比較不會一直規劃失敗。
+      tolerance: 0.5
+      use_astar: false
+      allow_unknown: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      # base_footprint 才是地面上的參考點。用 base_link 的話,整個 footprint
+      # 是畫在輪軸高度(離地 0.2032 m)那一層 —— 對 2D costmap 而言只是多一層
+      # 沒必要的轉換,而且 ITRI 原廠文件也是以 base_footprint 為 costmap 基準。
+      robot_base_frame: base_footprint
+
+      # ★ 實際車體尺寸,量自 chassis_description/meshes/DD-M/base_link.STL
+      #   車體本身   X -0.5049 ~ +0.5049   Y -0.3200 ~ +0.3200
+      #   含輪子     Y 外緣 ±0.3718(輪關節 ±0.31105 + 輪寬外側 0.0607)
+      #   輪子 X 只到 ±0.4875,被車體包住,所以長度由車體決定。
+      #
+      #   之前的 robot_radius: 0.20 是暫定值,而實際外接圓是
+      #   sqrt(0.505^2 + 0.372^2) = 0.627 m —— 差了三倍多。
+      #   用 0.20 規劃出來的路線,這台車根本鑽不過去。
+      #
+      #   用多邊形而不是圓:這台車長寬比 1.36,用外接圓當半徑會讓側向
+      #   多出 25 公分的虛胖,窄走廊直接規劃不出來。
+      footprint: "[[0.52, 0.39], [0.52, -0.39], [-0.52, -0.39], [-0.52, 0.39]]"
+      footprint_padding: 0.02
+
+      resolution: 0.05
+      track_unknown_space: true
+      always_send_full_costmap: true
+
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        # slam_toolbox 的 /map 是 TRANSIENT_LOCAL,這個一定要 True 才收得到
+        map_subscribe_transient_local: true
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          max_obstacle_height: 2.0
+          raytrace_max_range: 30.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 25.0
+          obstacle_min_range: 0.0
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # 膨脹半徑決定路線離牆多遠,但代價很現實:
+        # 0.05 m 解析度下 0.55 m = 11 格,每個障礙膨脹成直徑 23 格的圓 (~400 格)。
+        # 在 11x6 m 的室內,實測會把可行空間從 35% 吃到剩 2%,
+        # 連機器人自己所在的格子都變成 inscribed(值 99),規劃直接回空路徑。
+        #
+        # ★ 車體換成真實尺寸之後,footprint 本身就已經佔掉 1.04 x 0.78 m。
+        #   膨脹要從「內接圓」往外算,內接圓 = 0.39 m。這裡設 0.15 是額外的
+        #   安全邊界,不是車體半徑 —— 不要再把車寬加進來一次。
+        #   室內窄走廊若還是規劃不出來,先降這個值,不要動 footprint。
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
+
+lifecycle_manager_planner:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true
+    node_names: ["planner_server"]
+    bond_timeout: 10.0

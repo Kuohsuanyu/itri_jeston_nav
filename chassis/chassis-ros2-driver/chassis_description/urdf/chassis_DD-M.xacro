@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="chassis" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="chassis_common.xacro" />
+
+  <!-- ═══════════════════════════════════════════
+       Chassis geometry parameters
+  ══════════════════════════════════════════════ -->
+  <xacro:property name="mesh_dir"  value="DD-M"     />  <!-- meshes/<mesh_dir>/ -->
+  <xacro:property name="front_x"   value="0.275"    />  <!-- wheelbase/2 front  (m) -->
+  <xacro:property name="rear_x"    value="-0.275"   />  <!-- wheelbase/2 rear   (m) -->
+  <xacro:property name="track_y"   value="0.31105"  />  <!-- half track width   (m) -->
+  <xacro:property name="wheel_z"   value="0"        />  <!-- wheel axis height  (m) -->
+  <xacro:property name="wheel_radius" value="0.2032"  />  <!-- wheel radius, 16" diameter (m) -->
+
+
+  <!-- Wheel inertia (ixx == izz for axisymmetric wheel) -->
+  <xacro:property name="front_wheel_mass"  value="11.628" />
+  <xacro:property name="front_wheel_ixx"   value="0.16498" />
+  <xacro:property name="front_wheel_iyy"   value="0.30566" />
+
+  <xacro:property name="rear_wheel_mass"   value="11.607" />
+  <xacro:property name="rear_wheel_ixx"    value="0.16443" />
+  <xacro:property name="rear_wheel_iyy"    value="0.30566" />
+
+  <!-- ═══════════════════════════════════════════
+       Base footprint link
+  ══════════════════════════════════════════════ -->
+  <xacro:base_footprint wheel_radius="${wheel_radius}" wheel_z="${wheel_z}" />
+
+  <!-- ═══════════════════════════════════════════
+       Base link
+  ══════════════════════════════════════════════ -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0.00084846 -0.0002491 0.06999" rpy="0 0 0" />
+      <mass value="11.221" />
+      <inertia
+        ixx="0.33572"  ixy="-3.5828E-09" ixz="-0.00054353"
+        iyy="0.54427"  iyz="-4.2841E-07"
+        izz="0.69255" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://chassis_description/meshes/${mesh_dir}/base_link.STL" />
+      </geometry>
+      <material name="white">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://chassis_description/meshes/${mesh_dir}/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ═══════════════════════════════════════════
+       Wheel instances
+  ══════════════════════════════════════════════ -->
+  <xacro:wheel mesh_dir="${mesh_dir}" name="front_left"
+               x="${front_x}"  y="${track_y}"   z="${wheel_z}"  axis_y="1"
+               mass="${front_wheel_mass}" ixx="${front_wheel_ixx}" iyy="${front_wheel_iyy}"
+               com_y="-0.001691"
+               color="0.50196 0.50196 0.50196" />
+
+  <xacro:wheel mesh_dir="${mesh_dir}" name="front_right"
+               x="${front_x}"  y="${-track_y}"  z="${wheel_z}"  axis_y="-1"
+               mass="${front_wheel_mass}" ixx="${front_wheel_ixx}" iyy="${front_wheel_iyy}"
+               com_y="0.001691"
+               color="0.50196 0.50196 0.50196" />
+
+  <xacro:wheel mesh_dir="${mesh_dir}" name="rear_left"
+               x="${rear_x}"   y="${track_y}"   z="${wheel_z}"  axis_y="1"
+               mass="${rear_wheel_mass}"  ixx="${rear_wheel_ixx}"  iyy="${rear_wheel_iyy}"
+               com_y="-0.0011969"
+               color="0.50196 0.50196 0.50196" />
+
+  <xacro:wheel mesh_dir="${mesh_dir}" name="rear_right"
+               x="${rear_x}"   y="${-track_y}"  z="${wheel_z}"  axis_y="-1"
+               mass="${rear_wheel_mass}"  ixx="${rear_wheel_ixx}"  iyy="${rear_wheel_iyy}"
+               com_y="0.0011969"
+               color="0.50196 0.50196 0.50196"/>
+
+</robot>

@@ -1,0 +1,856 @@
+<title>光達導航系統架構 · 每一段在算什麼</title>
+<style>
+  /* ── 調色:測量儀器的世界。中性色一律偏向主色的青,不用純灰 ── */
+  :root{
+    --paper:#EEF2F2;  --surface:#F7F9F9;  --sunk:#E4EAEA;
+    --ink:#101C1F;    --body:#2C3D40;     --dim:#5F7275;
+    --rule:#D2DCDC;   --rule-soft:#E1E8E8;
+    --accent:#16697A; --accent-soft:#DCEAED;
+    --warn:#9E4715;   --warn-soft:#F5E6DC;
+    --ok:#2F6B4F;
+    /* ROS 的座標軸慣例色。只用在真的表示座標軸的地方,不當裝飾 */
+    --ax-x:#B8433A; --ax-y:#43804A; --ax-z:#3A62A8;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#0B1315;  --surface:#111C1E;  --sunk:#0A1112;
+      --ink:#E6EDED;    --body:#C3D0D1;     --dim:#8497 99;
+      --dim:#849799;
+      --rule:#223134;   --rule-soft:#1A2628;
+      --accent:#5BB3C4; --accent-soft:#122A30;
+      --warn:#DD8B57;   --warn-soft:#2A1B12;
+      --ok:#63B98C;
+      --ax-x:#E0736A; --ax-y:#77BC80; --ax-z:#7699DC;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0B1315;  --surface:#111C1E;  --sunk:#0A1112;
+    --ink:#E6EDED;    --body:#C3D0D1;     --dim:#849799;
+    --rule:#223134;   --rule-soft:#1A2628;
+    --accent:#5BB3C4; --accent-soft:#122A30;
+    --warn:#DD8B57;   --warn-soft:#2A1B12;
+    --ok:#63B98C;
+    --ax-x:#E0736A; --ax-y:#77BC80; --ax-z:#7699DC;
+  }
+
+  /* ── 字體:內文用 CJK 黑體,所有「你會在終端機打出來的東西」用等寬 ──
+       等寬不是裝飾,它標記的是「這是一個字面上的識別字或數值」 */
+  :root{
+    --sans:"Noto Sans TC","Microsoft JhengHei","PingFang TC",-apple-system,
+           "Segoe UI",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,"SFMono-Regular",
+           "Noto Sans TC",monospace;
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0; background:var(--paper); color:var(--body);
+    font:16px/1.78 var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .wrap{
+    display:grid; grid-template-columns:1fr; gap:0;
+    max-width:1180px; margin:0 auto; padding:0 22px 100px;
+  }
+  @media (min-width:1000px){
+    .wrap{grid-template-columns:216px minmax(0,1fr); gap:52px; padding-left:28px}
+  }
+
+  /* ── 目次 ── */
+  nav{display:none}
+  @media (min-width:1000px){
+    nav{
+      display:block; position:sticky; top:0; align-self:start;
+      max-height:100vh; overflow-y:auto; padding:38px 0 40px;
+      border-right:1px solid var(--rule-soft);
+    }
+  }
+  nav h2{
+    margin:0 0 12px; font-size:10.5px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--dim); font-weight:600;
+  }
+  nav ol{list-style:none; margin:0 0 20px; padding:0; display:flex; flex-direction:column; gap:1px}
+  nav a{
+    display:block; padding:4px 10px 4px 0; color:var(--dim);
+    text-decoration:none; font-size:13px; line-height:1.5;
+    border-left:2px solid transparent; padding-left:12px; margin-left:-14px;
+  }
+  nav a:hover{color:var(--accent); border-left-color:var(--rule)}
+  nav a:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+  nav .n{font:11px/1 var(--mono); color:var(--accent); margin-right:7px}
+
+  main{min-width:0; padding-top:38px}
+
+  /* ── 標題層級 ── */
+  h1{
+    margin:0 0 6px; font-size:clamp(28px,4.2vw,40px); line-height:1.18;
+    letter-spacing:-.022em; font-weight:700; color:var(--ink); text-wrap:balance;
+  }
+  .sub{margin:0 0 8px; color:var(--dim); font-size:15px; max-width:60ch}
+  .meta{
+    margin:0 0 44px; font:11.5px/1.7 var(--mono); color:var(--dim);
+    padding-top:14px; border-top:1px solid var(--rule);
+  }
+  section{padding-top:16px; margin-bottom:52px; scroll-margin-top:20px}
+  h2{
+    margin:0 0 4px; font-size:22px; line-height:1.3; letter-spacing:-.014em;
+    font-weight:700; color:var(--ink); text-wrap:balance;
+    display:flex; align-items:baseline; gap:12px;
+  }
+  h2 .n{
+    font:12px/1 var(--mono); color:var(--accent); font-weight:400;
+    flex:none; padding-top:2px;
+  }
+  h2 + .lede{margin:0 0 20px; color:var(--dim); font-size:14.5px; max-width:64ch}
+  h3{
+    margin:30px 0 8px; font-size:15px; font-weight:700; color:var(--ink);
+    letter-spacing:-.005em;
+  }
+  h4{margin:20px 0 6px; font-size:13.5px; font-weight:700; color:var(--body)}
+  p{margin:0 0 14px; max-width:68ch}
+  strong{color:var(--ink); font-weight:700}
+  a{color:var(--accent)}
+
+  code{
+    font:.875em/1.5 var(--mono); background:var(--sunk); color:var(--ink);
+    padding:1px 5px; border-radius:3px; white-space:nowrap;
+  }
+  pre{
+    margin:14px 0; padding:14px 16px; background:var(--sunk);
+    border:1px solid var(--rule-soft); border-radius:7px;
+    overflow-x:auto; font:12.5px/1.65 var(--mono); color:var(--ink);
+  }
+  pre code{background:none; padding:0; white-space:pre}
+
+  ul,ol.body{margin:0 0 14px; padding-left:20px; max-width:66ch}
+  li{margin-bottom:5px}
+  li::marker{color:var(--dim)}
+
+  /* ── 表格 ── */
+  .tw{overflow-x:auto; margin:16px 0; border:1px solid var(--rule); border-radius:8px}
+  table{border-collapse:collapse; width:100%; font-size:13.5px}
+  th,td{padding:9px 13px; text-align:left; border-bottom:1px solid var(--rule-soft);
+        vertical-align:top}
+  thead th{
+    background:var(--surface); color:var(--dim); font-weight:600;
+    font-size:11px; letter-spacing:.09em; text-transform:uppercase;
+    border-bottom:1px solid var(--rule); white-space:nowrap;
+  }
+  tbody tr:last-child td{border-bottom:none}
+  td.m,th.m{font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums;
+            white-space:nowrap; color:var(--ink)}
+  td.num{font-family:var(--mono); text-align:right; font-variant-numeric:tabular-nums;
+         white-space:nowrap}
+
+  /* ── 提示框 ── */
+  .box{
+    margin:18px 0; padding:14px 17px; border-radius:8px;
+    border:1px solid var(--rule); background:var(--surface); font-size:14px;
+  }
+  .box p:last-child{margin-bottom:0}
+  .box.warn{border-color:color-mix(in srgb,var(--warn) 40%,transparent);
+            background:var(--warn-soft)}
+  .box.warn .tag{color:var(--warn)}
+  .box.key{border-color:color-mix(in srgb,var(--accent) 38%,transparent);
+           background:var(--accent-soft)}
+  .box.key .tag{color:var(--accent)}
+  .tag{
+    display:block; font:10.5px/1 var(--mono); letter-spacing:.13em;
+    text-transform:uppercase; margin-bottom:8px; color:var(--dim); font-weight:600;
+  }
+
+  /* ── 公式 ── */
+  .eq{
+    margin:14px 0; padding:15px 18px; background:var(--surface);
+    border:1px solid var(--rule-soft); border-left:2px solid var(--accent);
+    border-radius:0 7px 7px 0; overflow-x:auto;
+    font:14px/1.9 var(--mono); color:var(--ink);
+  }
+  .eq .where{
+    display:block; margin-top:9px; padding-top:9px; border-top:1px dashed var(--rule);
+    font:12px/1.7 var(--mono); color:var(--dim); white-space:pre-wrap;
+  }
+
+  /* ── 圖 ── */
+  figure{margin:26px 0; padding:0}
+  figure svg{display:block; width:100%; max-width:100%; height:auto; color:var(--body)}
+  .fw{overflow-x:auto; padding:6px 0}
+  figcaption{
+    margin-top:12px; font-size:12.5px; line-height:1.65; color:var(--dim);
+    max-width:66ch; padding-left:1px;
+  }
+  figcaption b{color:var(--body)}
+
+  /* ── 座標軸圖例 ── */
+  .axk{display:inline-flex; align-items:center; gap:5px; font-size:12.5px}
+  .axk i{width:9px; height:9px; border-radius:2px; display:inline-block}
+
+  hr.div{border:0; border-top:1px solid var(--rule); margin:0}
+</style>
+
+<div class="wrap">
+<nav aria-label="目次">
+  <h2>管線</h2>
+  <ol>
+    <li><a href="#overview"><span class="n">—</span>全景</a></li>
+    <li><a href="#s1"><span class="n">1</span>感測器與驅動</a></li>
+    <li><a href="#s2"><span class="n">2</span>FAST-LIO 里程計</a></li>
+    <li><a href="#s3"><span class="n">3</span>三維壓成二維</a></li>
+    <li><a href="#s4"><span class="n">4</span>slam_toolbox</a></li>
+    <li><a href="#s5"><span class="n">5</span>TF2 座標系</a></li>
+    <li><a href="#s6"><span class="n">6</span>Nav2 規劃</a></li>
+  </ol>
+  <h2>其他</h2>
+  <ol>
+    <li><a href="#web"><span class="n">—</span>自製網頁服務</a></li>
+    <li><a href="#params"><span class="n">—</span>關鍵參數總表</a></li>
+    <li><a href="#issues"><span class="n">—</span>已知的架構問題</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<h1>光達導航系統架構</h1>
+<p class="sub">Livox Mid-360 + Jetson Orin Nano 的建圖與導航管線 —— 每一段究竟在算什麼,以及為什麼是這樣接的。</p>
+<p class="meta">wheeled-robot-lidar-nav　·　ROS 2 Humble　·　2026-08-10</p>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="overview">
+<h2>全景</h2>
+<p class="lede">六個階段,每一段只回答一個問題。看懂這張圖,後面都是細節。</p>
+
+<div class="fw">
+<figure>
+<svg viewBox="0 0 1000 340" role="img" aria-label="從光達與 IMU 經 FAST-LIO、pointcloud_to_laserscan、slam_toolbox 到 Nav2 的資料流,以及三個網頁檢視器的分支">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="ahA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#16697A"/>
+    </marker>
+  </defs>
+
+  <!-- 感測器 -->
+  <rect x="8" y="30" width="126" height="42" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="71" y="49" text-anchor="middle" font-size="13" fill="currentColor" font-weight="600">Mid-360</text>
+  <text x="71" y="64" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".65">10 Hz · 20064 點</text>
+
+  <rect x="8" y="88" width="126" height="42" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="71" y="107" text-anchor="middle" font-size="13" fill="currentColor" font-weight="600">內建 IMU</text>
+  <text x="71" y="122" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".65">200 Hz · 單位 g</text>
+
+  <rect x="8" y="255" width="126" height="42" rx="5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <text x="71" y="274" text-anchor="middle" font-size="13" fill="currentColor" font-weight="600">D435F</text>
+  <text x="71" y="289" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".65">只供顏色</text>
+
+  <!-- FAST-LIO -->
+  <rect x="196" y="46" width="150" height="68" rx="5" fill="#16697A" fill-opacity=".1" stroke="#16697A" stroke-width="1.6"/>
+  <text x="271" y="72" text-anchor="middle" font-size="13.5" fill="#16697A" font-weight="700">FAST-LIO</text>
+  <text x="271" y="90" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".75">iEKF + ikd-Tree</text>
+  <text x="271" y="104" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".55">6 自由度里程計</text>
+
+  <line x1="134" y1="51" x2="192" y2="66" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah)"/>
+  <line x1="134" y1="109" x2="192" y2="94" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah)"/>
+
+  <!-- p2l -->
+  <rect x="412" y="46" width="152" height="68" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="488" y="70" text-anchor="middle" font-size="12.5" fill="currentColor" font-weight="600">壓成二維</text>
+  <text x="488" y="87" text-anchor="middle" font-size="10" fill="currentColor" opacity=".6">pointcloud_</text>
+  <text x="488" y="100" text-anchor="middle" font-size="10" fill="currentColor" opacity=".6">to_laserscan</text>
+
+  <line x1="346" y1="80" x2="408" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah)"/>
+  <text x="377" y="72" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">/cloud_registered_body</text>
+
+  <!-- slam -->
+  <rect x="630" y="46" width="152" height="68" rx="5" fill="#16697A" fill-opacity=".1" stroke="#16697A" stroke-width="1.6"/>
+  <text x="706" y="72" text-anchor="middle" font-size="13.5" fill="#16697A" font-weight="700">slam_toolbox</text>
+  <text x="706" y="90" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".75">位姿圖 + 迴路閉合</text>
+  <text x="706" y="104" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".55">二維佔據地圖</text>
+
+  <line x1="564" y1="80" x2="626" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah)"/>
+  <text x="595" y="72" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">/scan</text>
+
+  <!-- nav2 -->
+  <rect x="848" y="46" width="144" height="68" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="920" y="70" text-anchor="middle" font-size="12.5" fill="currentColor" font-weight="600">Nav2</text>
+  <text x="920" y="87" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".6">costmap</text>
+  <text x="920" y="101" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".6">+ NavFn</text>
+
+  <line x1="782" y1="80" x2="844" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah)"/>
+  <text x="813" y="72" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">/map</text>
+
+  <!-- TF 匯流排 -->
+  <line x1="196" y1="170" x2="992" y2="170" stroke="#16697A" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="200" y="163" font-size="11" fill="#16697A" font-weight="600">TF 樹</text>
+  <text x="330" y="186" font-size="10" fill="currentColor" opacity=".7">camera_init → body</text>
+  <text x="620" y="186" font-size="10" fill="currentColor" opacity=".7">map → odom</text>
+  <text x="852" y="163" font-size="10" fill="currentColor" opacity=".7">查 map → base_footprint</text>
+
+  <line x1="271" y1="114" x2="271" y2="166" stroke="#16697A" stroke-width="1.2" marker-end="url(#ahA)"/>
+  <line x1="706" y1="114" x2="706" y2="166" stroke="#16697A" stroke-width="1.2" marker-end="url(#ahA)"/>
+  <line x1="920" y1="166" x2="920" y2="118" stroke="#16697A" stroke-width="1.2" marker-end="url(#ahA)"/>
+  <line x1="488" y1="166" x2="488" y2="118" stroke="#16697A" stroke-width="1.2" marker-end="url(#ahA)"/>
+
+  <!-- 網頁分支 -->
+  <rect x="196" y="255" width="150" height="42" rx="5" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".62"/>
+  <text x="271" y="272" text-anchor="middle" font-size="11.5" fill="currentColor" opacity=".85">三維點雲 :8080</text>
+  <text x="271" y="287" text-anchor="middle" font-size="10" fill="currentColor" opacity=".55">彩色 · 動態物體衰減</text>
+
+  <rect x="630" y="255" width="152" height="42" rx="5" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".62"/>
+  <text x="706" y="272" text-anchor="middle" font-size="11.5" fill="currentColor" opacity=".85">二維地圖 :8090</text>
+  <text x="706" y="287" text-anchor="middle" font-size="10" fill="currentColor" opacity=".55">點擊設目標 · 持續重規劃</text>
+
+  <path d="M271 114 L271 200 L240 200 L240 251" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".55" marker-end="url(#ah)"/>
+  <text x="150" y="205" font-size="9.5" fill="currentColor" opacity=".6">/cloud_registered</text>
+  <path d="M706 114 L706 214 L676 214 L676 251" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".55" marker-end="url(#ah)"/>
+  <path d="M920 114 L920 232 L760 232 L760 251" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".55" marker-end="url(#ah)"/>
+  <text x="800" y="228" font-size="9.5" fill="currentColor" opacity=".6">Path</text>
+  <line x1="134" y1="276" x2="192" y2="276" stroke="currentColor" stroke-width="1.1" opacity=".55" marker-end="url(#ah)"/>
+</svg>
+<figcaption><b>實線 = 訊息流,虛線 = TF 查詢。</b>Nav2 從來不知道 FAST-LIO 存在 —— 它只跟 TF 要 <code>map → base_footprint</code>,誰發的它不管。相機是旁支,幾何完全不參與。</figcaption>
+</figure>
+</div>
+
+<div class="tw">
+<table>
+<thead><tr><th>階段</th><th>回答的問題</th><th class="m">輸出</th></tr></thead>
+<tbody>
+<tr><td>驅動</td><td>感測器的原始位元組是什麼意思</td><td class="m">/livox/lidar<br>/livox/imu</td></tr>
+<tr><td>FAST-LIO</td><td>我現在在哪、朝哪(相對出發點)</td><td class="m">/Odometry<br>/cloud_registered</td></tr>
+<tr><td>壓成二維</td><td>水平方向上,每個角度最近的障礙有多遠</td><td class="m">/scan</td></tr>
+<tr><td>slam_toolbox</td><td>環境長什麼樣,以及里程計漂了多少</td><td class="m">/map<br>TF map→odom</td></tr>
+<tr><td>Nav2</td><td>從這裡到那裡怎麼走</td><td class="m">nav_msgs/Path</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="s1">
+<h2><span class="n">1</span>感測器與驅動</h2>
+<p class="lede">在談演算法之前,先弄清楚原始資料的性質 —— 後面很多設計都是被這些性質逼出來的。</p>
+
+<h3>Livox Mid-360 的非重複掃描</h3>
+<p>一般的機械旋轉光達是<strong>重複</strong>掃描:16 線或 32 線,每一圈掃過的都是同樣那幾條水平線,線與線之間的空隙永遠掃不到。Mid-360 用的是花瓣狀的<strong>非重複</strong>圖樣 —— 每一幀掃到的位置都不一樣,積分時間越長覆蓋越密。</p>
+<p>這帶來兩個後果,整個系統都在配合它:</p>
+<ul>
+<li><strong>單幀很稀疏</strong>(約 20064 點,分布在 360°×59° 的空間裡),所以不能像 2D 光達那樣單幀就拿來做掃描匹配。必須靠 IMU 把多幀串起來。</li>
+<li><strong>一幀之內的點不是同一時刻打出去的。</strong>100 ms 的幀,車若以 1 m/s 移動,幀首與幀尾就差 10 公分。不補償的話牆會變成斜的。</li>
+</ul>
+
+<h3>驅動:livox_ros_driver2</h3>
+<p>光達透過乙太網路(光達 <code>192.168.0.50</code>,主機 <code>192.168.0.100</code>)送 UDP 封包。驅動把它解成兩個 topic:</p>
+<div class="tw">
+<table>
+<thead><tr><th class="m">Topic</th><th>型別</th><th>內容</th></tr></thead>
+<tbody>
+<tr><td class="m">/livox/lidar</td><td class="m">CustomMsg</td><td>每個點帶 <code>offset_time</code>(相對幀首的奈秒數)—— 去畸變就是靠這個欄位</td></tr>
+<tr><td class="m">/livox/imu</td><td class="m">sensor_msgs/Imu</td><td>200 Hz 的角速度與加速度</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="box warn">
+<span class="tag">單位陷阱</span>
+<p><strong>Livox IMU 的線加速度單位是 g,不是 m/s²。</strong>標準的 <code>sensor_msgs/Imu</code> 規定是 m/s²,但 Livox 沒有換算。FAST-LIO 知道這件事並在內部處理;自己寫程式讀 <code>/livox/imu</code> 時,靜止讀到的模長會是 <code>1.0</code> 而不是 <code>9.81</code>。</p>
+</div>
+
+<h3>D435F:只當顏色來源</h3>
+<p>深度相機在這套系統裡<strong>不參與幾何</strong>。理由很直接:D435 的深度在 4 公尺外就不能看,而光達是 40 公尺、公分級。用深度相機建幾何在這個場景是降級。</p>
+<p>它做兩件事:提供彩色影像給點雲上色,以及提供<strong>對齊到彩色的深度</strong>(<code>align_depth.enable:=true</code>)。對齊深度讓深度圖和彩色圖共用同一個像素格,上色時判斷遮蔽只要查同一個 <code>(u,v)</code> 比距離就行 —— 沒有這道檢查,牆的顏色會被刷到牆後面的物體上。</p>
+</section>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="s2">
+<h2><span class="n">2</span>FAST-LIO 里程計</h2>
+<p class="lede">整套系統裡唯一真正在「量」運動的東西。它每 100 ms 回答一次:相對出發點,我移動到哪裡了。</p>
+
+<h3>狀態向量</h3>
+<p>FAST-LIO 的擴展卡爾曼濾波估計的不只是位姿,還包括 IMU 的偏差和重力方向:</p>
+<div class="eq">x = [ R, p, v, b<sub>g</sub>, b<sub>a</sub>, g ]<span class="where">R    姿態,SO(3) 旋轉矩陣
+p    位置
+v    速度
+b_g  陀螺儀零偏
+b_a  加速度計零偏
+g    重力向量(在世界座標系裡估出來,不是假設 (0,0,-9.81))</span></div>
+<p>把 <code>b_g</code>、<code>b_a</code> 放進狀態是必要的:MEMS IMU 的零偏會隨溫度漂移,不估它的話速度積分幾秒就飛掉。把 <code>g</code> 也放進去,是因為<strong>世界座標系的方向一開始並不知道</strong> —— 這正是我們後面遇到「odom 平面是斜的」的根源。</p>
+
+<h3>三個步驟</h3>
+<div class="fw">
+<figure>
+<svg viewBox="0 0 900 250" role="img" aria-label="FAST-LIO 每幀的三個步驟:IMU 前向傳播、反向去畸變、疊代點到平面更新,以及與 ikd-Tree 局部地圖的往返">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <rect x="14" y="46" width="176" height="76" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="102" y="70" text-anchor="middle" font-size="12.5" font-weight="700" fill="currentColor">① 前向傳播</text>
+  <text x="102" y="89" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">200 Hz IMU 積分</text>
+  <text x="102" y="105" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".55">得到幀內每一刻的姿態</text>
+
+  <rect x="240" y="46" width="176" height="76" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="328" y="70" text-anchor="middle" font-size="12.5" font-weight="700" fill="currentColor">② 反向去畸變</text>
+  <text x="328" y="89" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">用 offset_time 把每點</text>
+  <text x="328" y="105" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".55">拉回幀末同一時刻</text>
+
+  <rect x="466" y="30" width="200" height="108" rx="5" fill="#16697A" fill-opacity=".1" stroke="#16697A" stroke-width="1.6"/>
+  <text x="566" y="55" text-anchor="middle" font-size="12.5" font-weight="700" fill="#16697A">③ 疊代更新</text>
+  <text x="566" y="74" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">找最近鄰平面</text>
+  <text x="566" y="90" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">算點到平面殘差</text>
+  <text x="566" y="106" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">更新狀態 → 再找一次</text>
+  <text x="566" y="126" text-anchor="middle" font-size="10" fill="#16697A" opacity=".9">收斂前重複 3~4 次</text>
+
+  <rect x="716" y="46" width="170" height="76" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="801" y="70" text-anchor="middle" font-size="12.5" font-weight="700" fill="currentColor">ikd-Tree</text>
+  <text x="801" y="89" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">增量式 k-d 樹</text>
+  <text x="801" y="105" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".55">局部地圖,不是輸出</text>
+
+  <line x1="190" y1="84" x2="236" y2="84" stroke="currentColor" stroke-width="1.3" marker-end="url(#a2)"/>
+  <line x1="416" y1="84" x2="462" y2="84" stroke="currentColor" stroke-width="1.3" marker-end="url(#a2)"/>
+  <line x1="666" y1="70" x2="712" y2="70" stroke="currentColor" stroke-width="1.3" marker-end="url(#a2)"/>
+  <text x="689" y="62" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">查詢</text>
+  <line x1="712" y1="100" x2="666" y2="100" stroke="currentColor" stroke-width="1.3" marker-end="url(#a2)"/>
+  <text x="689" y="114" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">插入</text>
+
+  <path d="M566 138 L566 172 L102 172 L102 126" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#a2)"/>
+  <text x="334" y="188" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">收斂後的姿態回饋給下一幀的傳播起點</text>
+
+  <text x="14" y="222" font-size="11" fill="currentColor" opacity=".8" font-weight="600">輸出</text>
+  <text x="60" y="222" font-size="11" fill="currentColor" opacity=".65">/Odometry ·  /cloud_registered ·  /cloud_registered_body ·  TF camera_init → body</text>
+</svg>
+<figcaption>去畸變<b>必須在殘差計算之前</b>做,而去畸變需要姿態,姿態又要靠殘差求 —— 這個雞生蛋問題用「先用 IMU 積分當初值」解開。IMU 在 100 ms 內夠準,足以當去畸變的依據。</figcaption>
+</figure>
+</div>
+
+<h4>點到平面殘差</h4>
+<p>對去畸變後的每個點,在 ikd-Tree 裡找最近的 5 個鄰居,擬合一個平面(法線 <code>n</code>、平面上一點 <code>q</code>),殘差就是點到這個平面的垂直距離:</p>
+<div class="eq">r<sub>i</sub> = n<sub>i</sub><sup>T</sup> ( <b>R</b>·p<sub>i</sub> + <b>t</b> − q<sub>i</sub> )<span class="where">用點到「面」而不是點到「點」,是因為光達的取樣位置每幀都不同 ——
+非重複掃描下,同一面牆上兩幀的點根本不會落在同一個位置,
+點到點的距離永遠不會是 0,但點到平面可以。</span></div>
+
+<h4>為什麼叫 Fast</h4>
+<p>標準 EKF 的卡爾曼增益要對一個「測量維度 × 測量維度」的矩陣求逆。光達一幀有上千個有效測量,那個矩陣大到不可能即時算。FAST-LIO 用了一個等價變形,把求逆的維度換成<strong>狀態維度</strong>(固定 18 左右)。計算量因此與點數無關 —— 這是它能在 Orin Nano 上跑 10 Hz 的關鍵。</p>
+
+<h3>ikd-Tree:會刪東西的 k-d 樹</h3>
+<p>一般 k-d 樹是靜態的,加點就要重建。ikd-Tree 支援增量插入、<strong>刪除</strong>與局部重平衡,所以地圖可以隨著機器人移動而滑動:</p>
+<ul>
+<li><code>cube_side_length: 1000</code> —— 局部地圖立方體的邊長(公尺)</li>
+<li><code>det_range: 100</code> —— 光達的有效偵測距離</li>
+</ul>
+<p>當機器人距離立方體邊界小於 <code>1.5 × det_range</code> 時,立方體整個平移,並刪掉落在外面的點。</p>
+
+<div class="box warn">
+<span class="tag">實測踩過的坑</span>
+<p>把這兩個值改成 <code>cube_side_length: 200</code> / <code>det_range: 100</code> 會壞掉。半寬只有 100,而觸發滑動的門檻是 150 —— <strong>條件永遠成立,於是每一幀都在滑動並刪點</strong>。結果是站著不動也漂 <code>2.8 m</code>。改回 <code>1000/100</code> 之後,靜止漂移是 <code>0.015 m</code>。</p>
+</div>
+
+<div class="box key">
+<span class="tag">它不做什麼</span>
+<p><strong>沒有迴路閉合</strong> —— 走一圈回到原點,誤差直接累積,不會自動對齊。<br>
+<strong>沒有全域重定位</strong> —— 關機再開就是新的原點。<br>
+<strong>它的地圖不是給你用的</strong> —— ikd-Tree 只為了比對而存在,而且 <code>dense_publish_en: false</code> 根本沒發出來(開著會以 833 KB/s 的速度撐爆 DDS 寫入佇列,實測會 OOM)。</p>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="s3">
+<h2><span class="n">3</span>三維壓成二維</h2>
+<p class="lede">slam_toolbox 是二維演算法,吃不下點雲。這一段把 360°×59° 的球面資料壓成一圈平面雷射。</p>
+
+<h3>演算法</h3>
+<p><code>pointcloud_to_laserscan</code> 對每個點做四件事:</p>
+<ol class="body">
+<li>用 TF 把點從雲的座標系(<code>body</code>)轉到 <code>target_frame</code>(<code>base_link</code>)</li>
+<li><strong>高度帶篩選</strong>:只保留 <code>min_height</code> 到 <code>max_height</code> 之間的點</li>
+<li>算水平角 <code>θ = atan2(y, x)</code> 和水平距離 <code>r = √(x²+y²)</code></li>
+<li>把 <code>θ</code> 分配到角度格子裡,每格<strong>只留最小的 r</strong></li>
+</ol>
+<p>角度格數由 <code>angle_increment: 0.0087</code>(0.5°)決定,涵蓋 ±π 共 <strong>722 格</strong>。<code>use_inf: true</code> 讓沒有點的格子填 <code>inf</code> 而不是 <code>range_max</code> —— 差別很重要:<code>inf</code> 表示「這個方向沒有觀測」,<code>range_max</code> 表示「這個方向 40 公尺內確定沒有東西」,後者會讓 costmap 錯誤地把遠處清空。</p>
+
+<div class="box key">
+<span class="tag">為什麼用 body frame 的雲</span>
+<p>訂閱的是 <code>/cloud_registered_body</code> 而不是 <code>/cloud_registered</code>。雷射掃描的定義是「從感測器出發的一組射線」,必須在感測器座標系裡才有意義。餵世界座標的雲進去,轉出來的 <code>range</code> 會是「離世界原點的距離」,完全是錯的。</p>
+</div>
+
+<h3>tf2 MessageFilter —— 它為什麼會整批丟訊息</h3>
+<p>這個節點不是收到雲就處理,而是先丟進 <code>tf2_ros::MessageFilter</code>。這個過濾器會扣住訊息,直到「該訊息時間戳上的 TF」可用為止。佇列大小由 <code>queue_size</code> 決定(在這台 6 核機器上預設是 <code>6</code>)。</p>
+<p>如果 TF 一直等不到,佇列塞滿,新訊息進來就把最舊的擠掉,log 印:</p>
+<pre><code>Message Filter dropping message: frame 'body' at time 1786327212.961
+  for reason 'discarding message because the queue is full'</code></pre>
+
+<div class="box warn">
+<span class="tag">2026-08-10 實際發生</span>
+<p>這個節點的 log 有 396 行,其中 <strong>382 行是丟棄</strong> —— 一幀都沒通過,<code>/scan</code> 完全空白,slam_toolbox 因此凍結了 20 分鐘,而 <code>pgrep</code> 顯示所有行程都活著。</p>
+<p>從外部程序查 <code>base_link → body</code> 一直都是 OK 的,所以 TF 樹本身沒問題 —— 是<strong>那個節點實例</strong>的 tf2 buffer 沒接到 <code>/tf_static</code>。<code>/tf_static</code> 是 TRANSIENT_LOCAL,理論上晚加入的訂閱者會補到,但在啟動時序的某些競爭下會漏。單純重啟該節點就恢復:<code>10.2 Hz</code>,丟棄 <code>0</code>。</p>
+<p><strong>教訓:「行程還在」不等於「它在工作」。</strong></p>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="s4">
+<h2><span class="n">4</span>slam_toolbox</h2>
+<p class="lede">補上 FAST-LIO 缺的兩件事:持久化的地圖,以及對累積漂移的修正。</p>
+
+<h3>關鍵幀與位姿圖</h3>
+<p>不是每一幀 <code>/scan</code> 都會被記錄。只有當機器人相對上一個關鍵幀移動超過門檻,才插入新節點:</p>
+<div class="tw">
+<table>
+<thead><tr><th class="m">參數</th><th class="num">值</th><th>意義</th></tr></thead>
+<tbody>
+<tr><td class="m">minimum_travel_distance</td><td class="num">0.20 m</td><td>移動這麼遠才插一個關鍵幀</td></tr>
+<tr><td class="m">minimum_travel_heading</td><td class="num">0.20 rad</td><td>或轉這麼多角度</td></tr>
+</tbody>
+</table>
+</div>
+<div class="box warn">
+<span class="tag">不要調低</span>
+<p>曾經把 <code>minimum_travel_distance</code> 從 <code>0.2</code> 降到 <code>0.05</code>,想讓地圖更細。結果是站著不動時的位姿抖動也會不斷插入新節點,位姿圖無限長大 —— slam_toolbox 吃到 <strong>2.67 GB</strong> 被 OOM killer 殺掉。現在用 systemd 的 <code>MemoryMax=1500M</code> 圈住,失控時只死它一個,不會拖垮整塊板子。</p>
+</div>
+
+<h3>掃描匹配</h3>
+<p>新的一幀 <code>/scan</code> 進來時,slam_toolbox 以 FAST-LIO 給的位姿當初值,在 <code>(x, y, yaw)</code> 三維搜尋空間裡尋找讓這幀掃描與既有地圖最吻合的位置。用的是相關性掃描匹配(correlative scan matching):先在粗解析度上暴力搜尋,再逐步細化。</p>
+<p>結果是一個<strong>修正後的位姿</strong>,以及該匹配的信心度(資訊矩陣)。這條資訊變成位姿圖上的一條邊。</p>
+
+<h3>迴路閉合</h3>
+<p>每插入一個節點,就在一定半徑內尋找「幾何上靠近但在圖上距離很遠」的舊節點,試著把兩幀掃描匹配起來。匹配分數過門檻就加一條<strong>迴路邊</strong>,然後用 Ceres 對整張稀疏位姿圖做非線性最小平方優化,把累積誤差分攤回去。</p>
+
+<h3>map → odom 怎麼算出來</h3>
+<p>slam_toolbox 並不直接發布機器人的位置,它發布的是<strong>修正量</strong>:</p>
+<div class="eq">T<sub>map←odom</sub> = T<sub>map←base</sub> · T<sub>odom←base</sub><sup>−1</sup><span class="where">T_map←base   掃描匹配 + 位姿圖優化得到的「正確」位姿
+T_odom←base  FAST-LIO 說的位姿(會漂)
+兩者相除,就是「FAST-LIO 漂掉多少」</span></div>
+<p>所以 <code>map → odom</code> 平常接近零,慢慢變大,迴路閉合的瞬間<strong>階梯式跳一下</strong>。想親眼看到 SLAM 在做事,盯著這個值:</p>
+<pre><code>ros2 run tf2_ros tf2_echo map odom</code></pre>
+
+<h3>佔據柵格</h3>
+<p>地圖是 <code>0.05 m</code> 解析度的柵格,每格存的是 log-odds 形式的佔據機率。每一幀掃描對每條射線做 ray casting:射線<strong>經過</strong>的格子降低佔據機率,射線<strong>終點</strong>的格子提高。發布時轉成 <code>0–100</code> 的整數,<code>-1</code> 表示未知。</p>
+</section>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="s5">
+<h2><span class="n">5</span>TF2 座標系</h2>
+<p class="lede">整個系統最容易出錯的地方,而且錯了不會報錯,只會給你錯的答案。</p>
+
+<div class="fw">
+<figure>
+<svg viewBox="0 0 860 300" role="img" aria-label="TF 樹:map 到 odom 由 slam_toolbox 發布,odom 到 camera_init 與 body 到 base_link 是靜態,camera_init 到 body 由 FAST-LIO 發布,base_link 之下掛著理線盒、光達與相機">
+  <defs>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <g font-size="12.5" fill="currentColor">
+    <rect x="20" y="20" width="104" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="72" y="42" text-anchor="middle" font-weight="700">map</text>
+
+    <rect x="20" y="96" width="104" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="72" y="118" text-anchor="middle" font-weight="700">odom</text>
+
+    <rect x="20" y="172" width="104" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="72" y="194" text-anchor="middle" font-weight="700">camera_init</text>
+
+    <rect x="20" y="248" width="104" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="72" y="270" text-anchor="middle" font-weight="700">body</text>
+
+    <rect x="228" y="248" width="104" height="34" rx="4" fill="#16697A" fill-opacity=".12" stroke="#16697A" stroke-width="1.5"/>
+    <text x="280" y="270" text-anchor="middle" font-weight="700" fill="#16697A">base_link</text>
+  </g>
+
+  <line x1="72" y1="54" x2="72" y2="92" stroke="currentColor" stroke-width="1.4" marker-end="url(#a3)"/>
+  <line x1="72" y1="130" x2="72" y2="168" stroke="currentColor" stroke-width="1.4" marker-end="url(#a3)"/>
+  <line x1="72" y1="206" x2="72" y2="244" stroke="currentColor" stroke-width="1.4" marker-end="url(#a3)"/>
+  <line x1="124" y1="265" x2="224" y2="265" stroke="currentColor" stroke-width="1.4" marker-end="url(#a3)"/>
+
+  <g font-size="10.5" fill="currentColor" opacity=".8">
+    <text x="88" y="79">slam_toolbox 發 · 會跳</text>
+    <text x="88" y="155">static · 目前是 identity</text>
+    <text x="88" y="231">FAST-LIO 發 · 10 Hz 平滑</text>
+    <text x="130" y="258">static</text>
+  </g>
+
+  <g font-size="11.5" fill="currentColor" opacity=".72">
+    <text x="404" y="215">wiring_box</text>
+    <text x="404" y="243">body(光達 IMU)</text>
+    <text x="404" y="271">camera_link</text>
+    <text x="404" y="299">base_footprint</text>
+  </g>
+  <path d="M332 265 L370 265 L370 210 L398 210" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".6" marker-end="url(#a3)"/>
+  <path d="M370 265 L398 265" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".6" marker-end="url(#a3)"/>
+  <path d="M370 265 L370 238 L398 238" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".6" marker-end="url(#a3)"/>
+  <path d="M370 265 L370 294 L398 294" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".6" marker-end="url(#a3)"/>
+  <text x="404" y="180" font-size="10" fill="currentColor" opacity=".55">URDF 之後由 robot_state_publisher 發</text>
+
+  <g>
+    <rect x="600" y="20" width="240" height="120" rx="6" fill="none" stroke="currentColor" stroke-width="1" opacity=".45"/>
+    <text x="614" y="42" font-size="11" font-weight="700" fill="currentColor">REP-105 的語意</text>
+    <text x="614" y="63" font-size="10.5" fill="currentColor" opacity=".75">map    全域一致,但會跳</text>
+    <text x="614" y="81" font-size="10.5" fill="currentColor" opacity=".75">odom   連續平滑,但會漂</text>
+    <text x="614" y="99" font-size="10.5" fill="currentColor" opacity=".75">base   機器人本體</text>
+    <text x="614" y="123" font-size="10" fill="currentColor" opacity=".6">控制迴路吃 odom,導航吃 map</text>
+  </g>
+</svg>
+<figcaption>每個座標系<b>只能有一個父節點</b>。tf2 不會對違規報錯 —— 兩個發布者搶同一個子節點時,它會交替採用兩者,整棵樹以發布頻率抖動,症狀看起來像里程計在飄。</figcaption>
+</figure>
+</div>
+
+<h3>兩個 topic,兩種語意</h3>
+<div class="tw">
+<table>
+<thead><tr><th class="m">Topic</th><th>QoS</th><th>時間語意</th></tr></thead>
+<tbody>
+<tr><td class="m">/tf</td><td class="m">VOLATILE</td><td>每筆帶時間戳,緩衝 10 秒。查詢時在前後兩筆之間<strong>插值</strong>(位置線性、姿態球面線性)</td></tr>
+<tr><td class="m">/tf_static</td><td class="m">TRANSIENT_LOCAL</td><td><strong>時間無關</strong>,任何時刻查都有效。晚加入的訂閱者會補收到</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>查詢為什麼會失敗</h3>
+<p>查 <code>T(A ← B, t)</code> 需要路徑上<strong>每一段</strong>在時刻 <code>t</code> 都可用。少一段就整條失敗,錯誤訊息會直接告訴你是哪一段、缺多少:</p>
+<pre><code>Lookup would require extrapolation at time 1786327973.560,
+  but only time 1786326949.361 is in the buffer,
+  when looking up transform from frame [base_link] to frame [map]</code></pre>
+<p>上面這筆是 slam_toolbox 凍結時的實際輸出 —— 它的資料停在 1024 秒前。</p>
+
+<div class="box key">
+<span class="tag">診斷技巧</span>
+<p>整條查不到就<strong>一段一段查</strong>,斷點立刻現形:</p>
+<pre style="margin-bottom:0"><code>ros2 run tf2_ros tf2_echo odom camera_init
+ros2 run tf2_ros tf2_echo camera_init body
+ros2 run tf2_ros tf2_echo body base_link
+ros2 run tf2_ros tf2_echo map odom</code></pre>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="s6">
+<h2><span class="n">6</span>Nav2 規劃</h2>
+<p class="lede">只裝了規劃那一塊。<code>controller_server</code>、<code>bt_navigator</code>、<code>behavior_server</code> 都沒裝 —— 那些是驅動輪子用的,而底盤還沒接。</p>
+
+<h3>costmap 三層</h3>
+<div class="fw">
+<figure>
+<svg viewBox="0 0 820 210" role="img" aria-label="global_costmap 由靜態層、障礙層與膨脹層依序疊加,輸出 0 到 254 的代價值供 NavFn 搜尋">
+  <defs>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g font-size="12">
+    <rect x="14" y="40" width="164" height="66" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="96" y="63" text-anchor="middle" font-weight="700" fill="currentColor">static_layer</text>
+    <text x="96" y="81" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">/map 的牆</text>
+    <text x="96" y="96" text-anchor="middle" font-size="10" fill="currentColor" opacity=".55">0–100 → 0–254</text>
+
+    <rect x="212" y="40" width="164" height="66" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="294" y="63" text-anchor="middle" font-weight="700" fill="currentColor">obstacle_layer</text>
+    <text x="294" y="81" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">/scan 的即時障礙</text>
+    <text x="294" y="96" text-anchor="middle" font-size="10" fill="currentColor" opacity=".55">raytrace 同時負責清除</text>
+
+    <rect x="410" y="40" width="164" height="66" rx="5" fill="#16697A" fill-opacity=".1" stroke="#16697A" stroke-width="1.5"/>
+    <text x="492" y="63" text-anchor="middle" font-weight="700" fill="#16697A">inflation_layer</text>
+    <text x="492" y="81" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">往外指數衰減</text>
+    <text x="492" y="96" text-anchor="middle" font-size="10" fill="currentColor" opacity=".55">半徑 0.15 m</text>
+
+    <rect x="608" y="40" width="198" height="66" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="707" y="63" text-anchor="middle" font-weight="700" fill="currentColor">NavFn</text>
+    <text x="707" y="81" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">Dijkstra 勢場</text>
+    <text x="707" y="96" text-anchor="middle" font-size="10" fill="currentColor" opacity=".55">→ nav_msgs/Path</text>
+  </g>
+  <line x1="178" y1="73" x2="208" y2="73" stroke="currentColor" stroke-width="1.3" marker-end="url(#a4)"/>
+  <line x1="376" y1="73" x2="406" y2="73" stroke="currentColor" stroke-width="1.3" marker-end="url(#a4)"/>
+  <line x1="574" y1="73" x2="604" y2="73" stroke="currentColor" stroke-width="1.3" marker-end="url(#a4)"/>
+
+  <g font-size="11">
+    <text x="14" y="150" font-weight="700" fill="currentColor">代價值</text>
+    <rect x="14" y="162" width="120" height="16" rx="2" fill="currentColor" opacity=".12"/>
+    <text x="140" y="174" fill="currentColor" opacity=".75">0　自由</text>
+    <rect x="230" y="162" width="120" height="16" rx="2" fill="#16697A" opacity=".45"/>
+    <text x="356" y="174" fill="currentColor" opacity=".75">1–252　膨脹梯度</text>
+    <rect x="490" y="162" width="60" height="16" rx="2" fill="#16697A" opacity=".8"/>
+    <text x="556" y="174" fill="currentColor" opacity=".75">253　內接圓碰撞</text>
+    <rect x="690" y="162" width="40" height="16" rx="2" fill="#9E4715"/>
+    <text x="736" y="174" fill="currentColor" opacity=".75">254　致命</text>
+  </g>
+</svg>
+<figcaption>三層依序疊加,後面的層可以覆寫前面的。<b>膨脹層不是「把車變胖」</b> —— 車體尺寸已經由 footprint 表達,膨脹是額外的安全邊界。兩者搞混會讓車寬被算兩次。</figcaption>
+</figure>
+</div>
+
+<h4>膨脹的公式</h4>
+<div class="eq">cost(d) = 252 · exp( −k · (d − r<sub>inscribed</sub>) )<span class="where">d              格子到最近障礙的距離
+r_inscribed    車體內接圓半徑 = 0.39 m
+k              cost_scaling_factor = 3.0
+d 小於內接圓半徑 → 253(必定碰撞)</span></div>
+
+<div class="box warn">
+<span class="tag">實測踩過的坑</span>
+<p><code>inflation_radius: 0.55</code> 在 <code>0.05 m</code> 解析度下是 11 格,每個障礙膨脹成直徑 23 格的圓、約 400 格。在 11×6 公尺的室內,<strong>可行空間從 35% 被吃到剩 2%</strong>,連機器人自己所在的格子都變成 253,規劃器直接回空路徑 —— 而且不會報錯,只是「找不到路」。</p>
+</div>
+
+<h3>footprint,不是 robot_radius</h3>
+<p>車體實際尺寸量自 <code>chassis_description/meshes/DD-M/base_link.STL</code>:</p>
+<div class="tw">
+<table>
+<thead><tr><th>量測</th><th class="num">值</th><th>來源</th></tr></thead>
+<tbody>
+<tr><td>車長</td><td class="num">1.0097 m</td><td class="m">X −0.5049 … +0.5049</td></tr>
+<tr><td>車體寬</td><td class="num">0.640 m</td><td class="m">Y −0.3200 … +0.3200</td></tr>
+<tr><td>含輪總寬</td><td class="num">0.7435 m</td><td class="m">輪外緣 ±0.3718</td></tr>
+<tr><td>外接圓半徑</td><td class="num">0.627 m</td><td class="m">√(0.505² + 0.372²)</td></tr>
+<tr><td>內接圓半徑</td><td class="num">0.390 m</td><td class="m">半寬</td></tr>
+</tbody>
+</table>
+</div>
+<p>原本的 <code>robot_radius: 0.20</code> 比實際外接圓小了三倍多 —— 規劃出來的路線這台車根本鑽不過去。改用多邊形 footprint 而不是圓,是因為長寬比 1.36:用外接圓當半徑會讓側向虛胖 25 公分,窄走廊直接規劃不出來。</p>
+<pre><code>footprint: "[[0.52, 0.39], [0.52, -0.39], [-0.52, -0.39], [-0.52, 0.39]]"</code></pre>
+
+<h3>NavFn</h3>
+<p><code>use_astar: false</code>,所以跑的是 Dijkstra。它在 costmap 上從目標點向外擴散一個勢場,再從起點沿梯度下降走回去。全域最佳,但比 A* 慢 —— 在這個尺寸的地圖上差別可以忽略。</p>
+<p><code>tolerance: 0.5</code> 允許目標點落在障礙上時,改用半徑內最近的可行點。手動點選難免點到牆邊,沒有這個容忍值會一直規劃失敗。</p>
+</section>
+
+<hr class="div">
+
+<!-- ══════════════════════════════════════════ -->
+<section id="web">
+<h2>自製的網頁服務</h2>
+<p class="lede">ROS 生態沒有現成的東西能在瀏覽器裡看,所以三個檢視器都是自己寫的。</p>
+
+<h3>:8080　三維彩色點雲</h3>
+<p>訂閱 <code>/cloud_registered</code>,以 <code>0.02 m</code> 體素去重後只推「新出現的體素」給瀏覽器。頻寬因此與環境大小有關,而不是與掃描頻率有關 —— 站著不動時幾乎不佔頻寬。</p>
+<h4>動態物體的處理</h4>
+<p>原本「掃到一次就永久保留」,結果走過的人、揮動的手、推車的人全都拖出永遠不消失的殘影。兩道機制配合:</p>
+<div class="tw">
+<table>
+<thead><tr><th class="m">機制</th><th class="num">值</th><th>作用</th></tr></thead>
+<tbody>
+<tr><td class="m">CONFIRM_HITS</td><td class="num">3 幀</td><td>要被看到三次才准進圖。人走過某位置停留遠不到 0.3 秒,根本進不來</td></tr>
+<tr><td class="m">DECAY_SEC</td><td class="num">25 s</td><td>進圖後這麼久沒再被觀測就移除</td></tr>
+<tr><td class="m">DECAY_RADIUS</td><td class="num">8 m</td><td><strong>只有這個範圍內的體素才納入衰減判斷</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>第三項是關鍵。只看時間會犯一個嚴重錯誤:走過的區域一離開視野就沒有新觀測,25 秒後整片被刪掉 —— 大範圍建圖時等於邊走邊擦掉自己的成果。「東西不見了」這個結論需要有新觀測來否定它;離開視野的地方沒有任何資訊,不能當作消失。</p>
+
+<h4>顏色怎麼塞進去</h4>
+<p>每點從 4 個 float32 變 5 個(<code>x, y, z, intensity, rgb</code>),rgb 打包成<strong>單一 float</strong>:</p>
+<div class="eq">packed = r · 65536 + g · 256 + b<span class="where">float32 的尾數有 24 bit,剛好裝得下 0–16777215,拆回來精確。
+一個點只多 4 bytes,不用擴成三個 float。
+沒有顏色的點存 −1,瀏覽器退回高度上色並壓暗 —— 一眼看得出哪裡刷過。</span></div>
+
+<h3>:8090　二維地圖與導航</h3>
+<p>把 <code>OccupancyGrid</code> 轉成二進位推給瀏覽器,點擊畫布換算成 <code>map</code> 座標,呼叫 <code>ComputePathToPose</code> action 取回路徑。每 <code>1.5 s</code> 重新規劃一次,所以推著車移動時路線會跟著更新。</p>
+
+<h3>:8094　外參疊圖驗證</h3>
+<p>把光達點投影到相機影像上疊圖。判斷外參對不對最直接的方法 —— 外參正確時,光達點會<strong>精準落在影像裡物體的邊緣上</strong>。差 1 度,3 公尺外就偏 5 公分,一眼看得出來。</p>
+<div class="eq">p<sub>optical</sub> = B · M<sup>−1</sup> · C · p<sub>body</sub><span class="where">C  TF  base_link ← body
+M  base_link → camera_link   ← 這個就是要校的,由滑桿直接控制
+B  TF  color_optical ← camera_link(相機驅動發的,固定)</span></div>
+<p><code>M</code> 刻意不從 TF 讀而是由滑桿建構,這樣滑桿上的數值<strong>就是</strong>可以直接貼回 <code>camera_extrinsic.sh</code> 的值,不用任何換算。</p>
+</section>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="params">
+<h2>關鍵參數總表</h2>
+<p class="lede">每個都有踩過坑的理由,不是預設值。</p>
+
+<div class="tw">
+<table>
+<thead><tr><th class="m">參數</th><th class="num">值</th><th>為什麼</th></tr></thead>
+<tbody>
+<tr><td class="m">filter_size_surf</td><td class="num">0.1</td><td>FAST-LIO 輸入降採樣。關掉 dense_publish 之後靠這個把細節補回來</td></tr>
+<tr><td class="m">filter_size_map</td><td class="num">0.2</td><td>地圖降採樣。調到 0.3 會掉精度</td></tr>
+<tr><td class="m">cube_side_length</td><td class="num">1000</td><td>必須 &gt; 3 × det_range,否則每幀都在滑動刪點</td></tr>
+<tr><td class="m">det_range</td><td class="num">100</td><td>與上一項成對,不能單獨改</td></tr>
+<tr><td class="m">dense_publish_en</td><td class="num">false</td><td>開著 0.42 MB × 10 Hz RELIABLE,訂閱者排不掉,寫入佇列以 833 KB/s 累積直到 OOM</td></tr>
+<tr><td class="m">pcd_save_en</td><td class="num">false</td><td>配上 interval −1 會把每一幀都留在記憶體,5 GB 後被殺</td></tr>
+<tr><td class="m">time_sync_en</td><td class="num">false</td><td>開了會 <code>lidar loop back, clear buffer</code>,行程活著但什麼都不發</td></tr>
+<tr><td class="m">minimum_travel_distance</td><td class="num">0.20</td><td>降到 0.05 會讓靜止抖動不斷插節點,2.67 GB 後 OOM</td></tr>
+<tr><td class="m">transform_tolerance</td><td class="num">0.05</td><td>pointcloud_to_laserscan 等 TF 的寬限</td></tr>
+<tr><td class="m">use_inf</td><td class="num">true</td><td>沒觀測填 inf 而不是 range_max,否則遠處會被錯誤清空</td></tr>
+<tr><td class="m">inflation_radius</td><td class="num">0.15</td><td>0.55 會把可行空間從 35% 吃到 2%</td></tr>
+<tr><td class="m">rmem_max</td><td class="num">8 MB</td><td>系統預設 212992,0.42 MB 的點雲收不完整。已寫進 sysctl</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════ -->
+<section id="issues">
+<h2>已知的架構問題</h2>
+<p class="lede">三個都源自同一件事:Jetson 上的 <code>base_link</code> 目前還是 identity 綁在傾斜的光達上。</p>
+
+<div class="box key">
+<span class="tag">現況　2026-08-10</span>
+<p>箱子內部那一段<strong>已經量完</strong>(光達傾角 <code>29.69°</code>、離盒底 <code>0.2005 m</code>,三個獨立來源交叉驗證通過),數值也寫進 <code>qbot_sensors.xacro</code> 了。但那份 URDF <strong>從來沒有被 <code>robot_state_publisher</code> 載進 ROS</strong> —— Jetson 上跑的還是 <code>start_slam2d.sh</code> 發的兩個 identity 靜態變換。所以下面三個問題目前全部仍然存在。</p>
+</div>
+
+<div class="fw">
+<figure>
+<svg viewBox="0 0 780 250" role="img" aria-label="左圖顯示 base_link 傾斜時切出的掃描帶是斜的,右圖顯示扶正後切片才是水平的">
+  <defs>
+    <marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <!-- 左:現況 -->
+  <text x="20" y="22" font-size="12" font-weight="700" fill="#9E4715">現況　base_link 跟著光達斜 30°</text>
+  <line x1="20" y1="200" x2="350" y2="200" stroke="currentColor" stroke-width="1.6"/>
+  <text x="24" y="216" font-size="10" fill="currentColor" opacity=".6">地面</text>
+  <g transform="rotate(-30 185 140)">
+    <rect x="120" y="118" width="130" height="44" rx="3" fill="#9E4715" fill-opacity=".14" stroke="#9E4715" stroke-width="1.4" stroke-dasharray="5 3"/>
+    <text x="185" y="145" text-anchor="middle" font-size="10.5" fill="#9E4715">切出來的掃描帶</text>
+  </g>
+  <circle cx="185" cy="140" r="5" fill="#16697A"/>
+  <text x="196" y="136" font-size="10" fill="currentColor" opacity=".7">光達</text>
+  <path d="M120 200 A 65 65 0 0 1 137 156" fill="none" stroke="currentColor" stroke-width="1" opacity=".55"/>
+  <text x="126" y="182" font-size="10" fill="currentColor" opacity=".7">30°</text>
+
+  <!-- 右:修正後 -->
+  <text x="420" y="22" font-size="12" font-weight="700" fill="#16697A">修正　base_link 由 URDF 定義在輪軸上</text>
+  <line x1="420" y1="200" x2="750" y2="200" stroke="currentColor" stroke-width="1.6"/>
+  <text x="424" y="216" font-size="10" fill="currentColor" opacity=".6">地面</text>
+  <rect x="520" y="118" width="130" height="44" rx="3" fill="#16697A" fill-opacity=".14" stroke="#16697A" stroke-width="1.4"/>
+  <text x="585" y="145" text-anchor="middle" font-size="10.5" fill="#16697A">水平掃描帶</text>
+  <g transform="rotate(-30 585 140)">
+    <circle cx="585" cy="140" r="5" fill="#16697A"/>
+    <line x1="585" y1="140" x2="620" y2="140" stroke="currentColor" stroke-width="1.1" opacity=".5"/>
+  </g>
+  <text x="596" y="130" font-size="10" fill="currentColor" opacity=".7">光達仍然是斜的</text>
+  <line x1="585" y1="162" x2="585" y2="196" stroke="currentColor" stroke-width="1.1" opacity=".6" marker-end="url(#a5)"/>
+  <text x="592" y="184" font-size="10" fill="currentColor" opacity=".7">0.2032 m</text>
+</svg>
+<figcaption><b>修的不是光達,是基準。</b>光達照樣斜 30 度,但 <code>base_link</code> 改由 URDF 定義在四輪中心的輪軸高度上,<code>pointcloud_to_laserscan</code> 切出來的那一層才會真的水平。</figcaption>
+</figure>
+</div>
+
+<h3>① /scan 的切片是斜的</h3>
+<p><code>pointcloud_to_laserscan</code> 的 <code>target_frame: base_link</code>,而 <code>base_link</code> 現在是 identity 綁在 <code>body</code>(光達的 IMU 座標系)上。切出來的「水平帶」實際上傾斜 30 度,二維地圖與 costmap 都帶著這個扭曲。</p>
+
+<h3>② odom 平面也是斜的 —— 13% 尺度誤差</h3>
+<p><code>odom → camera_init</code> 目前是 identity,而 <code>camera_init</code> 是開機那一刻的光達姿態。slam_toolbox 把 <code>odom → base_link</code> 投影到 odom 的 x-y 平面做二維定位:</p>
+<div class="eq">投影後的位移 = 實際位移 × cos(29.69°) = 0.869<span class="where">地上走 1 公尺,投影下來只剩 0.87 公尺。
+地圖繞一圈回來對不上、量到的距離偏短,原因在這裡,不是迴路閉合沒做好。
+29.69° 是量出來的,不是機構圖的標稱 30°。</span></div>
+<p>而且 slam_toolbox 是二維的,它只修 <code>x</code>、<code>y</code>、<code>yaw</code>。<strong><code>map</code> 座標系裡的 z、roll、pitch 完全來自 FAST-LIO,沒有任何東西在修正它們</strong> —— 所以這個誤差不會被 SLAM 自己收斂掉。</p>
+
+<h3>③ TF 靜態變換的啟動競爭</h3>
+<p>2026-08-10 實際發生過:<code>pointcloud_to_laserscan</code> 的 tf2 buffer 沒接到 <code>/tf_static</code>,整整 20 分鐘丟掉每一幀,而所有行程都顯示正常。<code>start_slam2d.sh</code> 目前靠 <code>sleep 2</code> / <code>sleep 4</code> 排順序,這只是在賭。</p>
+
+<div class="box key">
+<span class="tag">修法</span>
+<p>①②由同一件事解決:用 ITRI 原廠的 <code>chassis_description</code> 建 URDF,<code>base_footprint</code> 在地面、<code>base_link</code> 在輪軸高度 <code>0.2032 m</code>,感測器掛在底下。<code>odom</code> 的水平性變成從 URDF 推導出來的結果,不是需要另外修的東西。</p>
+<p>③ 要在啟動腳本裡加一道「起來之後確認 <code>/scan</code> 真的有資料,沒有就重啟該節點」的檢查 —— 比延長 sleep 可靠。</p>
+</div>
+</section>
+
+</main>
+</div>

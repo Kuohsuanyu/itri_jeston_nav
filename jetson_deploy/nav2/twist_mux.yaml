@@ -1,0 +1,53 @@
+# /cmd_vel 的仲裁。
+#
+# 為什麼需要:Nav2 和手動遙控都想發速度指令。兩個 publisher 直接發同一個
+# topic 的話,底盤收到的是「最後到的那一筆」—— 也就是兩邊以各自的頻率互相
+# 蓋來蓋去,車會抽搐,而且人搶不回控制權。這是會撞到人的那種 bug。
+#
+# twist_mux 用優先權仲裁:高優先權的來源只要還在發,低優先權的就被完全鎖住。
+#
+#   人  >  Nav2        永遠成立。展示時出事,手一定要能立刻接管。
+#
+# 接線:
+#   chassis_console.py  --/cmd_vel_teleop-->  ┐
+#                                             ├-- twist_mux --> /cmd_vel --> 底盤
+#   velocity_smoother   --/cmd_vel_nav----->  ┘
+#
+# chassis_console 要用環境變數改發布目標:
+#   CHASSIS_CMD_TOPIC=/cmd_vel_teleop python3 chassis_console.py
+
+twist_mux:
+  ros__parameters:
+    use_sim_time: false
+
+    topics:
+      # 手動遙控。優先權最高。
+      # timeout 0.5:放開搖桿(或網頁 dead-man 停止心跳)後半秒,鎖定就解除,
+      # Nav2 才能接手。設太長會讓人以為車當掉了,設太短會在心跳抖動時被 Nav2 搶走。
+      teleop:
+        topic: /cmd_vel_teleop
+        timeout: 0.5
+        priority: 100
+
+      # 復原行為(spin / backup)。behavior_server 預設**直接發 /cmd_vel**,
+      # 完全繞過仲裁 —— 那代表 dry run 時它照樣轉得動輪子。必須 remap 進來。
+      # 優先權高於一般導航:復原是為了脫困,不該被還在算路的 controller 蓋掉。
+      recovery:
+        topic: /cmd_vel_behavior
+        timeout: 0.5
+        priority: 20
+
+      # Nav2 的輸出(已經過 velocity_smoother 平滑)
+      navigation:
+        topic: /cmd_vel_nav
+        timeout: 0.5
+        priority: 10
+
+    # 鎖定來源:發布 true 就把所有速度指令切斷,不管優先權。
+    # 這是「軟」急停 —— 真正的急停必須是底盤上的實體按鈕,不能只靠軟體。
+    # 這裡的用途是網頁上的停止鍵、以及之後接感測器保護時用。
+    locks:
+      emergency:
+        topic: /emergency_stop
+        timeout: 0.0        # 0 = 不逾時,要主動發 false 才解鎖
+        priority: 255

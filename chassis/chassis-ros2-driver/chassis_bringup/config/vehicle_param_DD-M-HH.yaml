@@ -1,0 +1,16 @@
+chassis_driver:
+  ros__parameters:
+    port: /dev/ttyUSB_chassis
+    baudrate: 19200
+    serial_timeout: 0.5
+    send_interval: 0.1
+    # 傳動與方向修正沿用 DD-M，尚未於 DD-M-HH 實機校正，出貨前須依 CLAUDE.md §5.1 驗證。
+    gear_ratio: 50.0
+    wheel_radius: 0.2032
+    wheel_separation: 0.6221
+    cmd_left_direction: 1
+    cmd_right_direction: 1
+    fb_left_direction: 1
+    fb_right_direction: 1
+    publish_tf: true
+    cmd_vel_timeout: 0.5

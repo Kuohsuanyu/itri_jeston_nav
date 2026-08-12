@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DD-M-HH — DD-M 的加高車身衍生型（噴藥車底盤）。
+
+  座標系說明（重要）：
+  SolidWorks 匯出的 DD-M-HH.SLDASM.urdf 其組合圖全域座標相對 DD-M **繞 Z 轉了 180°**
+  ——四個輪關節都帶 rpy="0 0 3.1416"，且 front_left 落在 x = -0.28。
+  本檔已把整車轉回 ROS 慣例（+x 為車頭、+y 為左側）：
+
+    p_ROS = Rz(pi) * p_SW
+
+  因此相對 SW 匯出值：
+    - 關節原點 x、y 取反號，關節 rpy 由 3.1416 變回 0（Rz(pi)*Rz(pi) = I）
+    - base_link 的 visual/collision 補上 rpy="0 0 ${pi}"，mesh 才會朝向正確
+    - base_link 慣性：質心 x、y 取反號，ixz／iyz 取反號（ixy 不變）
+    - 輪組 link 本身的座標系不變，故質量／慣性／com_y 與 SW 匯出值相同
+-->
+<robot name="chassis" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="chassis_common.xacro" />
+
+  <!-- ═══════════════════════════════════════════
+       Chassis geometry parameters
+  ══════════════════════════════════════════════ -->
+  <xacro:property name="mesh_dir"  value="DD-M-HH"    />  <!-- meshes/<mesh_dir>/ -->
+  <xacro:property name="front_x"   value="0.28"       />  <!-- wheelbase/2 front  (m) -->
+  <xacro:property name="rear_x"    value="-0.28"      />  <!-- wheelbase/2 rear   (m) -->
+  <xacro:property name="track_y"   value="0.31105"    />  <!-- half track width   (m) -->
+  <xacro:property name="wheel_z"   value="-0.0056939" />  <!-- wheel axis height  (m) -->
+  <xacro:property name="wheel_radius" value="0.2032"  />  <!-- wheel radius, 16" diameter (m) -->
+
+  <!-- Wheel inertia (ixx == izz for axisymmetric wheel) -->
+  <xacro:property name="front_wheel_mass"  value="11.628" />
+  <xacro:property name="front_wheel_ixx"   value="0.16498" />
+  <xacro:property name="front_wheel_iyy"   value="0.30566" />
+
+  <xacro:property name="rear_wheel_mass"   value="11.607" />
+  <xacro:property name="rear_wheel_ixx"    value="0.16443" />
+  <xacro:property name="rear_wheel_iyy"    value="0.30566" />
+
+  <!-- ═══════════════════════════════════════════
+       Base footprint link
+  ══════════════════════════════════════════════ -->
+  <xacro:base_footprint wheel_radius="${wheel_radius}" wheel_z="${wheel_z}" />
+
+  <!-- ═══════════════════════════════════════════
+       Base link
+       質心 Y 偏移 -0.12067 m 為 SolidWorks 匯出值（電池偏置），僅影響 Gazebo 動力學。
+  ══════════════════════════════════════════════ -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0.00017277 -0.12067 -0.00020488" rpy="0 0 0" />
+      <mass value="13.657" />
+      <inertia
+        ixx="0.54074"  ixy="2.1733E-06" ixz="1.9177E-08"
+        iyy="0.95687"  iyz="3.2487E-07"
+        izz="0.76507" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 ${pi}" />
+      <geometry>
+        <mesh filename="package://chassis_description/meshes/${mesh_dir}/base_link.STL" />
+      </geometry>
+      <material name="white">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 ${pi}" />
+      <geometry>
+        <mesh filename="package://chassis_description/meshes/${mesh_dir}/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ═══════════════════════════════════════════
+       Wheel instances
+  ══════════════════════════════════════════════ -->
+  <xacro:wheel mesh_dir="${mesh_dir}" name="front_left"
+               x="${front_x}"  y="${track_y}"   z="${wheel_z}"  axis_y="1"
+               mass="${front_wheel_mass}" ixx="${front_wheel_ixx}" iyy="${front_wheel_iyy}"
+               com_y="-0.001691"
+               color="0.50196 0.50196 0.50196" />
+
+  <xacro:wheel mesh_dir="${mesh_dir}" name="front_right"
+               x="${front_x}"  y="${-track_y}"  z="${wheel_z}"  axis_y="-1"
+               mass="${front_wheel_mass}" ixx="${front_wheel_ixx}" iyy="${front_wheel_iyy}"
+               com_y="0.001691"
+               color="0.50196 0.50196 0.50196" />
+
+  <xacro:wheel mesh_dir="${mesh_dir}" name="rear_left"
+               x="${rear_x}"   y="${track_y}"   z="${wheel_z}"  axis_y="1"
+               mass="${rear_wheel_mass}"  ixx="${rear_wheel_ixx}"  iyy="${rear_wheel_iyy}"
+               com_y="-0.0011969"
+               color="0.50196 0.50196 0.50196" />
+
+  <xacro:wheel mesh_dir="${mesh_dir}" name="rear_right"
+               x="${rear_x}"   y="${-track_y}"  z="${wheel_z}"  axis_y="-1"
+               mass="${rear_wheel_mass}"  ixx="${rear_wheel_ixx}"  iyy="${rear_wheel_iyy}"
+               com_y="0.0011969"
+               color="0.50196 0.50196 0.50196"/>
+
+</robot>
