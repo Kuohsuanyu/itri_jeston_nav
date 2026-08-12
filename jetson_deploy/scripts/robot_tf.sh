@@ -249,12 +249,14 @@ echo "--- 感測器安裝(三種模式完全相同,已校準的剛性關係)---"
 pub box_link  body        "$BODY_X" "$BODY_Y" "$BODY_Z" "$BODY_ROLL" "$BODY_PITCH" "$BODY_YAW"
 pub box_link  camera_link "$CAM_X"  "$CAM_Y"  "$CAM_Z"  "$CAM_ROLL"  "$CAM_PITCH"  "$CAM_YAW"
 
-# 理線盒外殼的中心。純視覺用 —— RViz 的 RobotModel 是**逐 link 查 TF**
-# 決定位置的,不是自己算 URDF 的運動學。所以 qbot_view.urdf 裡有的每個
-# link 都必須在 TF 上有對應的 frame,否則那個 link 就畫不出來。
-# 少了這一段,RViz 會顯示 "No transform from [wiring_box]" 而盒子消失。
-# URDF 的 box 以 link 原點為中心,所以要往上抬半個盒高(0.160/2)。
-pub box_link  wiring_box  0 0 0.080 0 0 0
+# ★ 曾經在這裡發過 box_link -> wiring_box(盒子外殼的中心),後來拿掉了。
+#   那是為了讓 RViz 畫得出盒子 —— RobotModel 是逐 link 查 TF 的,URDF 裡
+#   有的 link 沒有對應 frame 就畫不出來。
+#   但正確做法是在 URDF 的 <visual> 裡給 origin 偏移,不需要多一個 link:
+#       <link name="box_link">
+#         <visual><origin xyz="0 0 0.080"/><geometry><box .../></geometry></visual>
+#       </link>
+#   多開 link 的代價是多一段靜態 TF、多一個會查不到的 frame。
 sleep 4
 
 # ── 讓靜態變換定期重發 ────────────────────────────────────────────
