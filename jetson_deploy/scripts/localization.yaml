@@ -54,7 +54,16 @@ amcl:
     # likelihood_field 比 beam 快很多而且對地圖的小誤差比較寬容,
     # 這張圖是 08-10 建的、當時 /scan 的高度帶還是錯的,寬容一點比較好。
     laser_model_type: "likelihood_field"
-    laser_likelihood_max_dist: 2.0
+    # ★ 從 2.0 提高到 6.0。likelihood field 是「每一格到最近障礙物的距離」
+    #   預先算好的查表,超過這個值就**飽和** —— 離牆 2 m 和離牆 8 m 分數
+    #   一模一樣,粒子感受不到「往哪邊移會變好」。
+    #
+    #   位置差 2.8 公尺時,大部分雷射點都落在 2 m 以外,所有候選位置分數
+    #   都一樣爛,濾波器就卡在原地。改成 6.0 之後 3~6 公尺的偏差還有梯度。
+    #
+    #   代價:距離場的計算範圍變大(啟動時多算一點),而且對「地圖上沒有
+    #   但現場有」的東西(人、臨時堆放物)比較敏感。6.0 對走廊夠用。
+    laser_likelihood_max_dist: 6.0
     laser_min_range: 0.7      # 跟 start_slam2d.sh 的 RANGE_MIN 一致,
                               # 小於這個距離的是車體自己
     laser_max_range: 40.0     # Mid-360 的實際射程,跟 mid360.yaml 的 det_range 一致
