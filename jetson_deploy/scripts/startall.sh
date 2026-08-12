@@ -3,7 +3,7 @@
 # ASCII only: the base64|bash pipeline mangles CJK.
 #
 # 2026-08-08: nvblox removed. The D435 is now a COLOR SOURCE only -- the lidar
-# supplies all geometry, and lidar_web/server.py projects the cloud into the
+# supplies all geometry.
 # color image to paint it. align_depth stays enabled because the aligned depth
 # frame is what the occlusion test reads (without it, a wall's color gets
 # painted onto whatever is behind the wall).
@@ -59,7 +59,7 @@ start_capped fastlio-run 3G /tmp/fastlio.log \
     -r /tf:=/tf_fastlio_unused
 sleep 18
 
-# Camera comes up BEFORE the web viewer now. server.py latches the color
+# Camera:only depth + color, no pointcloud —— 那個在 CPU 上組點雲是白做工。
 # intrinsics on the first CameraInfo; starting it first just means the first
 # few seconds of cloud arrive uncolored.
 echo "[4/8] RealSense D435 (640x480 @15, aligned depth)"
@@ -81,119 +81,30 @@ echo "[5/8] camera extrinsic"
 # box_link -> camera_link 發布。留著它會讓 camera_link 有兩個
 # 父節點(base_link 和 box_link),整棵樹裂成兩半。
 
-echo "[6/8] 3D viewer :8080 (colored)"
-pkill -9 -f "python3 server.py" 2>/dev/null; sleep 1
-cd ~/lidar_web && setsid nohup python3 server.py > /tmp/webviewer.log 2>&1 < /dev/null &
-sleep 5
-cd ~
-grep -i "查不到\|Traceback\|Error" /tmp/webviewer.log | head -3 | sed 's/^/  /'
+# ★ 2026-08-12 拿掉三個網頁檢視器(:8080 點雲 / :8090 地圖 / :8092 相機)。
+#
+# 它們吃掉 Orin Nano 一大塊 CPU —— 三個 python3 加起來近 100%,
+# 加上 livox 驅動 85%、FAST-LIO 43%,六核心的 load average 衝到 5.4。
+# 後果不只是慢:核心來不及處理網路封包,實測 RX dropped 5289 個,
+# 從筆電 ping Jetson 變成 26% 遺失、最大 1096 ms。
+#
+# 而 RViz 已經涵蓋它們全部的功能(點雲、地圖、相機影像、送目標點),
+# 而且算繪在筆電上,不佔 Jetson。
+#
+# 需要看點雲/影像用 RViz,它算繪在筆電上,不佔 Jetson。
 
-echo "[7/8] 2D mapping + map viewer :8090"
-bash ~/slam2d/start_slam2d.sh > /tmp/slam2d_start.log 2>&1
-pkill -9 -f "python3 map_server.py" 2>/dev/null; sleep 1
-cd ~/slam2d && setsid nohup python3 map_server.py > /tmp/mapweb.log 2>&1 < /dev/null &
-sleep 4
-cd ~
+# ★ 這支只負責**感測器層**:光達驅動 + FAST-LIO + 相機。
+#   TF / EKF / SLAM / bridge 由 bringup_all.sh 依序帶起,不要在這裡重複起,
+#   兩支腳本都起同樣的東西會互相 pkill,實測會卡住。
 
-echo "[8/8] zenoh bridge + camera web viewer :8092"
-setsid nohup env RUST_LOG=info zenoh-bridge-ros2dds \
-  -l tcp/0.0.0.0:7447 --no-multicast-scouting \
-  --pub-max-frequency "/cloud_registered=3.0" \
-  > /tmp/zenoh.log 2>&1 < /dev/null &
-pkill -9 -f "python3 cam_server.py" 2>/dev/null; sleep 1
-cd ~/cam_web && setsid nohup python3 cam_server.py > /tmp/cam_web.log 2>&1 < /dev/null &
-sleep 8
-cd ~
-
-echo
 echo "=== status ==="
-for p in livox_ros_driver2_node fastlio_mapping "python3 server.py" \
-         "python3 map_server.py" async_slam_toolbox_node \
-         pointcloud_to_laserscan zenoh-bridge-ros2dds \
-         realsense2_camera_node "python3 cam_server.py"; do
+for p in livox_ros_driver2_node fastlio_mapping async_slam_toolbox_node \
+         pointcloud_to_laserscan zenoh-bridge-ros2dds realsense2_camera_node; do
     pgrep -f "$p" > /dev/null && echo "  [OK]   $p" || echo "  [DEAD] $p"
 done
-echo "--- camera stream rates ---"
-curl -sS http://127.0.0.1:8092/stats.json 2>/dev/null | sed 's/^/  /'; echo
 free -m | head -2 | sed 's/^/  /'
 
 echo
-echo "=============== colorization preconditions ==============="
-# Coloring needs exactly three things. If all three are OK, the 'colored'
-# percentage in the browser will climb as the camera sweeps the room.
-python3 - <<'PY'
-import time, rclpy
-from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from tf2_ros import Buffer, TransformListener
-
-rclpy.init()
-n = Node("color_precheck")
-buf = Buffer(); TransformListener(buf, n)
-got = {}
-n.create_subscription(Image, "/camera/camera/color/image_raw",
-                      lambda m: got.setdefault("color", m), qos_profile_sensor_data)
-n.create_subscription(Image, "/camera/camera/aligned_depth_to_color/image_raw",
-                      lambda m: got.setdefault("adepth", m), qos_profile_sensor_data)
-n.create_subscription(CameraInfo, "/camera/camera/color/camera_info",
-                      lambda m: got.setdefault("info", m), qos_profile_sensor_data)
-n.create_subscription(PointCloud2, "/cloud_registered",
-                      lambda m: got.setdefault("cloud", m), qos_profile_sensor_data)
-t0 = time.time()
-while time.time() - t0 < 20 and len(got) < 4:
-    rclpy.spin_once(n, timeout_sec=0.2)
-
-c = got.get("cloud")
-world = c.header.frame_id if c else "?"
-print("  1. cloud       : %s  (world frame = %s)"
-      % ("OK" if c else "NO DATA", world))
-print("  2. color image : %s   aligned depth: %s   intrinsics: %s"
-      % ("OK" if "color" in got else "NO DATA",
-         "OK" if "adepth" in got else "MISSING (occlusion test off)",
-         "OK" if "info" in got else "NO DATA"))
-
-ok = False
-for src in (world, "odom", "camera_init", "map"):
-    if src == "?":
-        continue
-    try:
-        t = buf.lookup_transform("camera_color_optical_frame", src, rclpy.time.Time())
-        v = t.transform.translation
-        print("  3. TF %s -> camera_color_optical_frame : OK  (%.3f, %.3f, %.3f)"
-              % (src, v.x, v.y, v.z))
-        ok = True
-        break
-    except Exception:
-        pass
-if not ok:
-    print("  3. TF -> camera_color_optical_frame : FAIL")
-    print("     cloud will stay grey. check /tmp/cam_extrinsic.log")
-PY
 
 echo
-echo "=============== clock offset ==============="
-python3 - <<'PY'
-import time, rclpy
-from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Imu
-from nav_msgs.msg import Odometry
-
-got = {}
-rclpy.init()
-n = Node("clock_check")
-n.create_subscription(Imu, "/livox/imu", lambda m: got.setdefault("imu", m), qos_profile_sensor_data)
-n.create_subscription(Odometry, "/Odometry", lambda m: got.setdefault("odom", m), 10)
-t0 = time.time()
-while time.time() - t0 < 15 and len(got) < 2:
-    rclpy.spin_once(n, timeout_sec=0.2)
-host = time.time()
-print("  host clock            : %.3f" % host)
-for k, label in (("imu", "/livox/imu    stamp"), ("odom", "/Odometry     stamp")):
-    m = got.get(k)
-    if m is None:
-        print("  %-22s: NO DATA" % label); continue
-    s = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
-    print("  %-22s: %.3f   offset %+.3f s" % (label, s, s - host))
-PY
+echo "感測器層完成。TF / SLAM / bridge 請用 bringup_all.sh。"
