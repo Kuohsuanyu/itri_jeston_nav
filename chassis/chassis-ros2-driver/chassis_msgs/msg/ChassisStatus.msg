@@ -1,4 +1,0 @@
-bool emergency_stop
-bool handle_offline
-bool driver1_offline
-bool driver2_offline

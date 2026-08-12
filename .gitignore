@@ -35,3 +35,22 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# ── 只在 Windows 筆電跑的,不進版控 ────────────────────────────────
+# 2026-08-12 決定:這個 repo 就是 Jetson 的鏡像。Jetson clone 下來不該
+# 拿到一堆它永遠不會執行的東西。
+# 這些檔案還留在筆電的工作目錄裡,只是不追蹤。
+/tools/
+/wsl/
+/chassis/
+/console.py
+/ui.html
+/chassis_check.py
+/sync_jetson.py
+/qbot_conn.py
+/*.bat
+/*.ps1
+jetson_deploy/deploy.ps1
+jetson_deploy/calib_view/
+jetson_deploy/lidar_web/
+jetson_deploy/slam2d_map_server.py
