@@ -268,11 +268,23 @@ sleep 4
 #
 # 這支每 2 秒把整組重發一次,之後不管誰什麼時候連上都補得到。
 # 重發同樣的值不會製造雙父節點 —— tf2 的靜態緩衝以 child 為鍵,覆寫成一樣的。
-# ★ 曾經在這裡起過 tf_relay_wheels.py,把底盤的輪子 TF 在本機再發一次。
-#   已移除 —— 真正的原因是 zenoh bridge 的**啟動順序**,不是轉發問題。
-#   bridge 按「探索到的節點」建路由,在底盤上線之後才啟動就探索得到
-#   /chassis_driver 和 /robot_state_publisher,輪子的 TF 自然過得去。
-#   詳見 start_zenoh_jetson.sh 開頭。
+# ── 轉發底盤的輪子 TF ─────────────────────────────────────────────
+# zenoh bridge 按「探索到的節點」建路由,而它探索不到底盤的
+# robot_state_publisher —— 所以輪子的 TF 過不了橋,WSL 的 RViz 少四個
+# frame,車看起來散掉(RobotModel 是逐 link 查 TF 的)。
+#
+# ★ 2026-08-12 排除過的假設,都不是原因:
+#     「bridge 啟動太早」 在確認 ros2 node list 看得到底盤之後才重啟,還是 0 個
+#     「initialPeersList 蓋掉 multicast」 拿掉 fastdds_peers.xml,還是 0 個
+#     「WiFi 丟包」 ping 0% 遺失、資料流 20 秒 0 次斷點
+#   而 ros2 node list **看得到**那兩個節點,bridge 就是看不到。
+#   根因沒釘死,但復現率 100%,所以繞過。
+#
+# 這支在 Jetson 本機把輪子的變換再發一次,bridge 對本機節點的探索是穩的。
+echo "--- 轉發底盤的輪子 TF(bridge 探索不到底盤的 rsp)---"
+cd "$D" && setsid nohup python3 tf_relay_wheels.py 10     > /tmp/tf_relay_wheels.log 2>&1 < /dev/null &
+sleep 4
+pgrep -f tf_relay_wheels.py > /dev/null     && echo "  tf_relay_wheels OK"     || { echo "  ⚠ tf_relay_wheels DEAD"; tail -6 /tmp/tf_relay_wheels.log; }
 echo "--- /tf_static 定期重發(給 zenoh bridge 和晚到的訂閱者)---"
 cd "$D" && setsid nohup python3 tf_static_repeat.py 2.0     > /tmp/tf_static_repeat.log 2>&1 < /dev/null &
 sleep 4
