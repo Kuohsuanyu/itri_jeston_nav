@@ -39,7 +39,12 @@ echo "[1/3] TF:robot_tf.sh(EKF + base_link -> box_link -> body / camera_link)"
 # base_link 的父節點是樹莓派 robot_state_publisher 在發的,反過來發等於再
 # 宣告一次 base_link 是自己的子節點 —— tf2 對同一個子節點只留一筆 static,
 # 誰後發誰贏而且不報錯。實測兩次相同查詢隔五分鐘得到 x=+0.831 和 x=+0.202。
-bash "$D/robot_tf.sh" 2>&1 | sed 's/^/    /'
+# ★ 不要用 `| sed` 縮排。robot_tf.sh 會 spawn 一堆背景行程,只要其中
+#   任何一個還握著 pipe 的寫入端,sed 就等不到 EOF,整條腳本永遠卡住。
+#   2026-08-12 實測卡了 7 分鐘,而 robot_tf.sh 本身早就結束了。
+#   寫檔案再 cat 出來就沒有這個問題。
+bash "$D/robot_tf.sh" > /tmp/robot_tf.log 2>&1
+sed 's/^/    /' /tmp/robot_tf.log
 
 # 用 body-frame 的點雲,不能用 /cloud_registered(那是世界座標系,
 # pointcloud_to_laserscan 需要感測器座標系的雲)。
