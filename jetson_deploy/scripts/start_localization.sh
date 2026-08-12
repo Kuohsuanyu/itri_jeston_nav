@@ -18,22 +18,41 @@
 #   startall.sh(FAST-LIO)和 robot_tf.sh(EKF -> multi_odom)已經跑過。
 #   /scan 不用先起 —— 沒有的話這支會自己叫 start_scan.sh。
 #
-# ── ★ 起來之後還要給初始位置,否則 TF tree 是斷的 ────────────────
-#   set_initial_pose: false,AMCL 收到 /initialpose 才開始發 map -> multi_odom。
-#   在那之前 rqt_tf_tree 會看到 map 孤立在旁邊,接不到 multi_odom —— 那是
-#   正常的等待狀態,不是故障。給法:
-#       RViz 工具列「2D Pose Estimate」在圖上點車的實際位置、拖出朝向
-#       或  python3 waypoint.py init <航點名>
+# ── 初始位置 ────────────────────────────────────────────────────
+#   這支**一定會**發初始位置,預設是地圖原點 map(0,0,0) —— 也就是當初
+#   開始建圖的那個實體定點。標準流程:車停回那裡 -> 啟動 -> 直接就定位好。
+#
+#   不發的話 AMCL(set_initial_pose: false)不會發 map -> multi_odom,
+#   RViz 的 Fixed Frame 是 map 就整個畫面錯誤 —— 而且會變成死結:
+#   要在地圖上點位置得先看得到地圖,要看得到地圖又要先有位置。
+#
+#   車停在別處的話:
+#       RViz 工具列「2D Pose Estimate」在圖上點實際位置、拖出朝向
 #       或  bash start_localization.sh <地圖> <x> <y> <yaw度>
+#       或  python3 waypoint.py init <航點名>
 source /opt/ros/humble/setup.bash
 source ~/ws_livox/install/setup.bash
 export ROS_DOMAIN_ID=0
 
 D=~/slam2d
 MAP="${1:-$(ls -t ~/maps/*.yaml 2>/dev/null | head -1)}"
-IX="$2"; IY="$3"; IYAW="$4"
 LOG=/tmp/localization.log
 : > "$LOG"
+
+# ── 初始位置:預設就是地圖原點 ────────────────────────────────────
+# ★ 「初始位置」是地上的一個**實體定點** —— 就是當初開始建圖的那個位置。
+#   地圖是以那裡為原點長出來的,所以車停在那裡時,map(0,0,0) 就是正解。
+#
+#   流程固定成:把車停回初始位置 -> 啟動 -> 直接就定位好了,不用再點。
+#
+#   為什麼要有預設值:AMCL 的 set_initial_pose 是 false,沒收到 /initialpose
+#   之前它**不發 map -> multi_odom**。而 RViz 的 Fixed Frame 是 map,
+#   查不到 map 就整個畫面都是錯誤狀態 —— 於是變成死結:要在地圖上點位置,
+#   得先看得到地圖;要看得到地圖,又要先有位置。給預設值就解開了。
+#
+#   車**不是**停在初始位置的話,啟動後在 RViz 用 2D Pose Estimate 改,
+#   或 bash start_localization.sh <地圖> <x> <y> <yaw度>
+IX="${2:-0.0}"; IY="${3:-0.0}"; IYAW="${4:-0.0}"
 
 [ -f "$MAP" ] || { echo "✗ 找不到地圖:$MAP"; echo "  ~/maps 裡有:"; ls -1 ~/maps/*.yaml 2>/dev/null | sed 's/^/    /'; exit 1; }
 echo "=== 地圖:$MAP ==="
@@ -104,19 +123,32 @@ for p in "map_server" "amcl" "lifecycle_manager"; do
     [ "$n" -gt 0 ] && echo "    [OK]   $p" || echo "    [DEAD] $p"
 done
 
-# 初始位置。AMCL 不知道你從哪開始 —— 沒給的話粒子散在整張圖上,
-# 在長廊這種到處長得一樣的環境幾乎收斂不了。
-if [ -n "$IX" ] && [ -n "$IY" ]; then
-    echo
-    echo "=== 設定初始位置 ($IX, $IY, ${IYAW:-0}°) ==="
-    Y=$(python3 -c "import math;print(math.sin(math.radians(${IYAW:-0})/2))")
-    W=$(python3 -c "import math;print(math.cos(math.radians(${IYAW:-0})/2))")
-    timeout 20 ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
-      "{header: {frame_id: map}, pose: {pose: {position: {x: $IX, y: $IY, z: 0.0},
-        orientation: {z: $Y, w: $W}},
-        covariance: [0.25,0,0,0,0,0, 0,0.25,0,0,0,0, 0,0,0,0,0,0,
-                     0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0.068]}}" 2>&1 | tail -1
-    sleep 4
+echo
+echo "=== 設定初始位置 map($IX, $IY, $IYAW°) ==="
+if [ "$IX" = "0.0" ] && [ "$IY" = "0.0" ] && [ "$IYAW" = "0.0" ]; then
+    echo "    預設值 = 地圖原點 = 建圖起點那個實體定點。"
+    echo "    ★ 前提是車確實停在那裡。不是的話用 RViz 的 2D Pose Estimate 改。"
+fi
+# 共變異數給小的 = 「我確定在這裡」,不是「大概在附近」。
+# 這條走廊 81 公尺、門洞週期性重複,給大的話粒子會散開然後鎖到隔壁門洞 ——
+# 實測沿走廊滑動同一幀掃描,相距十幾公尺的三個位置分數一模一樣(0.0500)。
+Y=$(python3 -c "import math;print(math.sin(math.radians($IYAW)/2))")
+W=$(python3 -c "import math;print(math.cos(math.radians($IYAW)/2))")
+timeout 20 ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
+  "{header: {frame_id: map}, pose: {pose: {position: {x: $IX, y: $IY, z: 0.0},
+    orientation: {z: $Y, w: $W}},
+    covariance: [0.10,0,0,0,0,0, 0,0.10,0,0,0,0, 0,0,0,0,0,0,
+                 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0.03]}}" 2>&1 | tail -1
+sleep 6
+
+# ★ 驗證 map -> multi_odom 真的出現了。AMCL 的 /initialpose 訂閱是 RELIABLE,
+#   而且它要收到下一幀 /scan 才會開始發 TF —— 沒驗證的話會以為設好了,
+#   到 RViz 才發現 Fixed Frame [map] does not exist。
+if timeout 12 ros2 run tf2_ros tf2_echo map multi_odom 2>&1 | grep -q Translation; then
+    echo "    ✓ map -> multi_odom 已建立,TF 樹接起來了"
+else
+    echo "    ✗ map -> multi_odom 還是沒有 —— AMCL 沒吃到初始位置"
+    echo "      檢查 /scan 有沒有在發,以及 ros2 lifecycle get /amcl 是不是 active"
 fi
 
 echo
@@ -132,8 +164,8 @@ timeout 15 ros2 topic echo /amcl_pose --once --field pose.pose.position 2>&1 | h
 echo
 cat <<'MSG'
 === 接下來 ===
-沒給初始位置、或位置不準的話,在 RViz 用工具列的「2D Pose Estimate」
-在地圖上點一下車的實際位置、拖出朝向。AMCL 會收斂。
+初始位置已經設好(預設 = 地圖原點 = 建圖起點)。車停在別處的話,
+在 RViz 用工具列的「2D Pose Estimate」點實際位置、拖出朝向。
 
 RViz 要看的:
     Map        /map                 灰底的既有地圖
