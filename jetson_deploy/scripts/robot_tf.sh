@@ -124,6 +124,7 @@ for ch in box_link body camera_link wiring_box base_lidar camera_init base_link 
 done
 pkill -f fastlio_base_tf.py 2>/dev/null
 pkill -f tf_static_repeat.py 2>/dev/null
+pkill -f tf_relay_wheels.py 2>/dev/null
 pkill -f odom_cov_relay.py 2>/dev/null
 pkill -f ekf_node 2>/dev/null
 sleep 2
@@ -267,6 +268,16 @@ sleep 4
 #
 # 這支每 2 秒把整組重發一次,之後不管誰什麼時候連上都補得到。
 # 重發同樣的值不會製造雙父節點 —— tf2 的靜態緩衝以 child 為鍵,覆寫成一樣的。
+# ── 轉發底盤的輪子 TF ─────────────────────────────────────────────
+# zenoh bridge 按「探索到的節點」建路由,而 Jetson 探索不到底盤的
+# robot_state_publisher(WiFi 上 DDS 的圖探索不對稱,資料到得了但節點資訊到不了)。
+# 所以輪子的 TF 過不了橋,WSL 的 RViz 就少四個 frame,車看起來散掉。
+# 這支在 Jetson 本機把它們再發一次,bridge 就建得了路由。
+echo "--- 轉發底盤的輪子 TF(讓它過得了 zenoh bridge)---"
+cd "$D" && setsid nohup python3 tf_relay_wheels.py 10     > /tmp/tf_relay_wheels.log 2>&1 < /dev/null &
+sleep 4
+pgrep -f tf_relay_wheels.py > /dev/null     && echo "  tf_relay_wheels OK"     || { echo "  ⚠ tf_relay_wheels DEAD"; tail -6 /tmp/tf_relay_wheels.log; }
+
 echo "--- /tf_static 定期重發(給 zenoh bridge 和晚到的訂閱者)---"
 cd "$D" && setsid nohup python3 tf_static_repeat.py 2.0     > /tmp/tf_static_repeat.log 2>&1 < /dev/null &
 sleep 4
