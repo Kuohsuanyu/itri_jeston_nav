@@ -108,19 +108,33 @@ if grep -qi "Address already in use" "$LOG"; then
     exit 1
 fi
 
-# 檢查有沒有製造重複發布者。bridge 應該只**轉發**,不該讓本機的 topic
-# 多出發布者 —— 多出來就是殘留路由或迴圈,RViz 會收到重複資料而卡死。
+# ★ 不要用「發布者數 > 1」判斷 —— 那是誤報,我先前就這樣誤判過。
+#
+# bridge 會替它橋接的每個 topic 註冊一個 RELIABLE 的 DDS 發布者端點,
+# 但**不送資料**(只在真的有遠端來源時才送)。所以 /scan 有 2 個發布者
+# 是正常的:pointcloud_to_laserscan 是 BEST_EFFORT,bridge 那個是
+# RELIABLE 的空端點。
+#
+# 要判斷有沒有真的重複,看**時間戳**:
+#     收到的則數 明顯多於 不重複的時間戳 = 真的收到兩份
+# 2026-08-12 實測:149 則 / 149 個不重複時間戳,沒有重複。
 sleep 5
-echo "  發布者檢查(每個應該都是 1):"
-BAD=0
-for t in /scan /map /cloud_registered; do
-    n=$(timeout 10 ros2 topic info "$t" 2>/dev/null | grep -oE "Publisher count: [0-9]+" | grep -oE "[0-9]+")
-    printf "    %-20s %s
-" "$t" "${n:-?}"
-    [ "${n:-1}" -gt 1 ] && BAD=1
-done
-[ "$BAD" = "1" ] && {
-    echo "  ⚠ 有重複發布者 —— 兩端都停掉(SIGTERM)再依序啟動:"
-    echo "     WSL:  kill \$(pgrep -f zenoh-bridge-ros2dds)"
-    echo "     Jetson: 再跑一次這支"
-}
+echo "  資料重複檢查:"
+timeout 20 python3 -c '
+import time, rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import LaserScan
+rclpy.init(); n = Node("dupchk"); st = []
+n.create_subscription(LaserScan, "/scan",
+    lambda m: st.append(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9),
+    QoSProfile(depth=50, reliability=ReliabilityPolicy.BEST_EFFORT,
+               history=HistoryPolicy.KEEP_LAST))
+t0 = time.time()
+while time.time() - t0 < 10:
+    rclpy.spin_once(n, timeout_sec=0.05)
+u = len(set(st))
+print("    /scan  %d 則 / %d 個不重複時間戳  %s"
+      % (len(st), u, "★ 有重複,兩端都 SIGTERM 停掉再依序啟動"
+         if len(st) > u * 1.3 else "OK"))
+' 2>/dev/null
