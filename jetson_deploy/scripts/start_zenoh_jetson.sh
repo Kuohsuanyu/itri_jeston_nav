@@ -26,6 +26,19 @@
 #
 # 維持全速的(RViz 真正需要的):
 #     /tf  /tf_static  /scan  /map  /odom  /odometry/filtered  /robot_description
+# ★★ 啟動順序很重要:一定要在**底盤上線之後**才啟動這支。
+#
+# zenoh-bridge-ros2dds 是按「探索到的 ROS 節點」建路由的,不是按 topic。
+# 底盤還沒起來時啟動,它探索不到 /chassis_driver 和 /robot_state_publisher,
+# 那兩個節點發的東西(輪子的 TF、/odom、/joint_states)就一律不轉發 ——
+# 而且不會有任何錯誤,只是 WSL 那邊少東西。
+#
+# 2026-08-12 實測:
+#   底盤離線時啟動 bridge  ->  Discovered 清單全是 Jetson 本機的,WSL 沒有輪子
+#   底盤在線時啟動 bridge  ->  /chassis_driver /robot_state_publisher 都探索到,
+#                              WSL 拿到完整的 13 個 frame
+#
+# 底盤重開機之後也要重跑這支。
 set -e
 source /opt/ros/humble/setup.bash
 export ROS_DOMAIN_ID=0
