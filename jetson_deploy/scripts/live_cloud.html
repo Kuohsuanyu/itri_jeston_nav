@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mid-360 即時回波</title>
+<style>
+:root{
+  --bg:#0e1114; --panel:#161a1f; --panel-2:#1b2027;
+  --ink:#dfe4ea; --muted:#828b98; --hair:#252b33;
+  --accent:#d97a48; --accent-soft:rgba(217,122,72,.16);
+  --live:#5fb489; --stale:#d0a244; --dead:#d9634b;
+  --vp:#090b0e; --vp-hair:rgba(255,255,255,.07);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:13px/1.5 ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  -webkit-font-smoothing:antialiased}
+.sans{font-family:system-ui,-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif}
+#app{display:grid;grid-template-rows:auto 1fr;height:100%}
+header{display:flex;align-items:baseline;gap:20px;flex-wrap:wrap;
+  padding:10px 16px;border-bottom:1px solid var(--hair);background:var(--panel)}
+h1{margin:0;font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}
+h1 .dot{color:var(--accent)}
+#pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dead);
+  margin-right:7px;vertical-align:1px;transition:background .2s}
+.kv{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+.kv b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.kv span::before{content:attr(data-k);letter-spacing:.08em;margin-right:6px}
+main{display:grid;grid-template-columns:250px 1fr;min-height:0}
+@media (max-width:760px){main{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  #rail{max-height:42vh;overflow-y:auto}}
+#rail{border-right:1px solid var(--hair);background:var(--panel);padding:14px;
+  display:flex;flex-direction:column;gap:15px;overflow-y:auto}
+.grp{display:flex;flex-direction:column;gap:7px}
+.lbl{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);
+  display:flex;justify-content:space-between;align-items:baseline}
+.lbl var{font-style:normal;color:var(--ink);font-variant-numeric:tabular-nums}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.seg.three{grid-template-columns:1fr 1fr 1fr}
+button{font:inherit;font-size:11.5px;color:var(--ink);cursor:pointer;background:var(--panel-2);
+  border:1px solid var(--hair);border-radius:3px;padding:6px 7px;text-align:left;
+  transition:background .12s,border-color .12s}
+button:hover{border-color:var(--accent)}
+button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);
+  color:var(--accent);font-weight:600}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input[type=range]{width:100%;accent-color:var(--accent);margin:0}
+#ramp{height:9px;border-radius:2px;border:1px solid var(--hair)}
+.rampends{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.note{font-size:11px;line-height:1.55;color:var(--muted)}
+.note b{color:var(--ink);font-weight:600}
+hr{border:0;border-top:1px solid var(--hair);margin:1px 0}
+#vp{position:relative;background:var(--vp);min-height:0;overflow:hidden}
+#gl{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+#gl:active{cursor:grabbing}
+.hud{position:absolute;pointer-events:none;color:#aeb6c2;font-size:10.5px;letter-spacing:.06em;
+  font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #000}
+#hint{left:12px;bottom:10px}
+#cam{right:12px;top:10px;text-align:right}
+#msg{position:absolute;inset:0;display:grid;place-content:center;text-align:center;
+  color:#8b95a3;font-size:12px;line-height:1.9;padding:24px;max-width:620px;margin:auto}
+#msg b{color:var(--accent)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1><span id="pulse"></span>Mid&#8209;360<span class="dot"> ·</span> 即時回波</h1>
+    <div class="kv" id="kv"></div>
+  </header>
+  <main>
+    <div id="rail">
+      <div class="grp">
+        <div class="lbl">上色依據</div>
+        <div class="seg" id="modes"></div>
+        <div id="ramp"></div>
+        <div class="rampends"><span id="r0"></span><span id="r1"></span></div>
+      </div>
+      <hr>
+      <div class="grp">
+        <div class="lbl">座標系</div>
+        <div class="seg" id="frames"></div>
+        <div class="note" id="frameNote"></div>
+      </div>
+      <hr>
+      <div class="grp">
+        <div class="lbl"><span>疊加幀數</span><var id="aLab"></var></div>
+        <input type="range" id="acc" min="1" max="20" step="1" value="1">
+        <div class="note">疊多幀會把非重複掃描的空隙補起來,看得比較完整;
+          但車在動的時候會拖影 —— 那是真的位移,不是雜訊。</div>
+      </div>
+      <div class="grp">
+        <div class="lbl"><span>距離上限</span><var id="dLab"></var></div>
+        <input type="range" id="dCut" min="1" max="40" step="0.5" value="40">
+      </div>
+      <div class="grp">
+        <div class="lbl"><span>點大小</span><var id="sLab"></var></div>
+        <input type="range" id="pSize" min="1" max="6" step="0.5" value="2">
+      </div>
+      <hr>
+      <div class="grp">
+        <div class="lbl">參考幾何</div>
+        <div class="seg three" id="refs"></div>
+      </div>
+      <div class="seg">
+        <button id="pause" style="text-align:center">暫停</button>
+        <button id="reset" style="text-align:center">重設視角</button>
+      </div>
+      <hr>
+      <p class="note sans" id="foot"></p>
+    </div>
+    <div id="vp">
+      <canvas id="gl"></canvas>
+      <div id="msg">連線中…</div>
+      <div class="hud" id="cam"></div>
+      <div class="hud" id="hint">拖曳旋轉 · 滾輪縮放 · Shift+拖曳平移</div>
+    </div>
+  </main>
+</div>
+<script>
+"use strict";
+/* base_footprint <- body,抄自 robot_tf.sh(2026-08-13 捲尺實測)。
+   改了那邊記得改這裡 —— 兩份不一致的話,「車體座標系」的地面不會落在 z=0。 */
+const EXTR = {t:[0.155, 0.0, 0.7305], rpy:[0.0112, 0.5181, 0.0]};
+const FOOT = [1.010, 0.743], RMIN = 0.70, BAND = [0.10, 1.50];
+
+function show(html){ const m = document.getElementById("msg");
+  if (m) { m.style.display = "grid"; m.innerHTML = html; } }
+function hide(){ const m = document.getElementById("msg"); if (m) m.style.display = "none"; }
+addEventListener("error", e => show("頁面出錯:<br><b>" + (e.message || e.error) + "</b>"));
+
+function mul(a,b){const o=new Float32Array(16);
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++){let s=0;
+    for(let k=0;k<4;k++)s+=a[k*4+j]*b[i*4+k];o[i*4+j]=s;}return o;}
+function persp(f,ar,n,fa){const t=1/Math.tan(f/2);return new Float32Array(
+  [t/ar,0,0,0, 0,t,0,0, 0,0,(fa+n)/(n-fa),-1, 0,0,2*fa*n/(n-fa),0]);}
+function lookAt(e,c,up){
+  const z=[e[0]-c[0],e[1]-c[1],e[2]-c[2]];let l=Math.hypot(z[0],z[1],z[2])||1;
+  z.forEach((v,i)=>z[i]=v/l);
+  const x=[up[1]*z[2]-up[2]*z[1],up[2]*z[0]-up[0]*z[2],up[0]*z[1]-up[1]*z[0]];
+  l=Math.hypot(x[0],x[1],x[2])||1;x.forEach((v,i)=>x[i]=v/l);
+  const y=[z[1]*x[2]-z[2]*x[1],z[2]*x[0]-z[0]*x[2],z[0]*x[1]-z[1]*x[0]];
+  return new Float32Array([x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+    -(x[0]*e[0]+x[1]*e[1]+x[2]*e[2]), -(y[0]*e[0]+y[1]*e[1]+y[2]*e[2]),
+    -(z[0]*e[0]+z[1]*e[1]+z[2]*e[2]), 1]);}
+function extrinsic(){
+  const [rr,pp,yy]=EXTR.rpy,[tx,ty,tz]=EXTR.t;
+  const cr=Math.cos(rr),sr=Math.sin(rr),cp=Math.cos(pp),sp=Math.sin(pp),
+        cy=Math.cos(yy),sy=Math.sin(yy);
+  const R=[cy*cp, cy*sp*sr-sy*cr, cy*sp*cr+sy*sr,
+           sy*cp, sy*sp*sr+cy*cr, sy*sp*cr-cy*sr,
+           -sp,   cp*sr,          cp*cr];
+  return new Float32Array([R[0],R[3],R[6],0, R[1],R[4],R[7],0,
+                           R[2],R[5],R[8],0, tx,ty,tz,1]);}
+const IDENT=new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+
+const cv = document.getElementById("gl");
+const gl = cv.getContext("webgl",{antialias:true,alpha:false})
+        || cv.getContext("experimental-webgl",{antialias:true,alpha:false});
+if (!gl) show("這個瀏覽器沒有啟用 WebGL。<br>換 Chrome / Edge,或在設定裡開啟硬體加速。");
+
+const VS = `
+attribute vec3 aPos; attribute vec2 aAtt;
+uniform mat4 uVP, uModel; uniform float uScale, uSize, uDcut, uAge;
+uniform int uMode; uniform vec2 uZ;
+varying vec3 vC; varying float vDrop;
+vec3 viridis(float t){ t=clamp(t,0.0,1.0);
+  const vec3 c0=vec3(0.2777,0.0054,0.3341),c1=vec3(0.1051,1.4046,1.3846);
+  const vec3 c2=vec3(-0.3309,0.2148,0.0951),c3=vec3(-4.6342,-5.7991,-19.3324);
+  const vec3 c4=vec3(6.2283,14.1799,56.6906),c5=vec3(4.7764,-13.7451,-65.3530);
+  const vec3 c6=vec3(-5.4355,4.6459,26.3124);
+  return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));}
+void main(){
+  vec3 p = aPos*uScale; float d = length(p);
+  vDrop = d > uDcut ? 1.0 : 0.0;
+  vec3 w = (uModel*vec4(p,1.0)).xyz;
+  if      (uMode==0) vC = viridis(aAtt.x*2.2);
+  else if (uMode==1) vC = viridis((w.z-uZ.x)/max(uZ.y-uZ.x,1e-3));
+  else if (uMode==2) vC = viridis(d/max(uDcut,1e-3));
+  else               vC = mix(vec3(0.85,0.47,0.25), vec3(0.20,0.26,0.34), aAtt.y);
+  vC *= mix(1.0, 0.35, aAtt.y*uAge);
+  gl_Position = uVP*vec4(w,1.0); gl_PointSize = uSize;
+  if (vDrop>0.5){ gl_Position=vec4(2.0,2.0,2.0,1.0); gl_PointSize=0.0; }}`;
+const FS = `precision mediump float; varying vec3 vC; varying float vDrop;
+void main(){ if(vDrop>0.5) discard;
+  vec2 d=gl_PointCoord-vec2(0.5); if(dot(d,d)>0.25) discard;
+  gl_FragColor=vec4(vC,1.0);}`;
+const LVS = `attribute vec3 aPos; attribute vec3 aCol; uniform mat4 uVP;
+  varying vec3 vC; void main(){vC=aCol; gl_Position=uVP*vec4(aPos,1.0);}`;
+const LFS = `precision mediump float; varying vec3 vC;
+  void main(){gl_FragColor=vec4(vC,1.0);}`;
+
+function prog(vs,fs){
+  const p=gl.createProgram();
+  for(const [t,src] of [[gl.VERTEX_SHADER,vs],[gl.FRAGMENT_SHADER,fs]]){
+    const s=gl.createShader(t); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    gl.attachShader(p,s);}
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;}
+const P = prog(VS,FS), L = prog(LVS,LFS);
+const bPos = gl.createBuffer(), bAtt = gl.createBuffer();
+const bLine = gl.createBuffer(), bLineC = gl.createBuffer();
+let nPts = 0, nLine = 0, scale = 0.002;
+
+const REF = {grid:true, body:true, band:false};
+function buildRefs(vehicle){
+  const V=[],C=[];
+  const seg=(a,b,c)=>{V.push(a[0],a[1],a[2],b[0],b[1],b[2]);C.push(c[0],c[1],c[2],c[0],c[1],c[2]);};
+  const HAIR=[0.15,0.18,0.22], AX=[0.85,0.36,0.18];
+  if(vehicle){
+    if(REF.grid) for(let i=-10;i<=10;i++){
+      seg([i,-10,0],[i,10,0], i===0?[0.24,0.28,0.34]:HAIR);
+      seg([-10,i,0],[10,i,0], i===0?[0.24,0.28,0.34]:HAIR);}
+    if(REF.body){
+      const Lx=FOOT[0]/2, Ly=FOOT[1]/2, c=[0.38,0.62,0.80];
+      seg([Lx,Ly,0],[Lx,-Ly,0],c); seg([Lx,-Ly,0],[-Lx,-Ly,0],c);
+      seg([-Lx,-Ly,0],[-Lx,Ly,0],c); seg([-Lx,Ly,0],[Lx,Ly,0],c);
+      const cc=[0.80,0.42,0.22];
+      for(let i=0;i<72;i++){const a1=i/72*6.2832,a2=(i+1)/72*6.2832;
+        seg([RMIN*Math.cos(a1),RMIN*Math.sin(a1),0],[RMIN*Math.cos(a2),RMIN*Math.sin(a2),0],cc);}}
+    if(REF.band){const c=[0.36,0.55,0.42];
+      for(const h of BAND) for(let i=0;i<72;i++){
+        const a1=i/72*6.2832,a2=(i+1)/72*6.2832,r=6;
+        seg([r*Math.cos(a1),r*Math.sin(a1),h],[r*Math.cos(a2),r*Math.sin(a2),h],c);}}
+    const o=EXTR.t;
+    seg([o[0]-.12,o[1],o[2]],[o[0]+.12,o[1],o[2]],AX);
+    seg([o[0],o[1]-.12,o[2]],[o[0],o[1]+.12,o[2]],AX);
+    seg([o[0],o[1],o[2]-.12],[o[0],o[1],o[2]+.12],AX);
+  } else {
+    seg([0,0,0],[1,0,0],[0.85,0.33,0.28]);
+    seg([0,0,0],[0,1,0],[0.42,0.74,0.42]);
+    seg([0,0,0],[0,0,1],[0.38,0.58,0.88]);}
+  nLine=V.length/3;
+  gl.bindBuffer(gl.ARRAY_BUFFER,bLine); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(V),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bLineC); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(C),gl.STATIC_DRAW);
+}
+
+const S={mode:0, vehicle:true, dcut:40, size:2, acc:1, paused:false,
+         az:-2.35, el:0.38, dist:14, tgt:[0.3,0,0.6]};
+const HOME=JSON.parse(JSON.stringify(S));
+const ring=[];                       // 最近幾幀,用來疊加
+
+function upload(){
+  let tot=0; for(const f of ring) tot+=f.n;
+  if(!tot){ nPts=0; return; }
+  const pos=new Int16Array(tot*3), att=new Float32Array(tot*2);
+  let o=0;
+  for(let k=0;k<ring.length;k++){
+    const f=ring[k], age=ring.length>1 ? (ring.length-1-k)/(ring.length-1) : 0;
+    pos.set(f.q, o*3);
+    for(let i=0;i<f.n;i++){ att[(o+i)*2]=f.it[i]/255; att[(o+i)*2+1]=age; }
+    o+=f.n;}
+  nPts=tot;
+  gl.bindBuffer(gl.ARRAY_BUFFER,bPos); gl.bufferData(gl.ARRAY_BUFFER,pos,gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bAtt); gl.bufferData(gl.ARRAY_BUFFER,att,gl.DYNAMIC_DRAW);
+}
+
+function zRange(){ return S.vehicle ? [-0.3,3.6] : [-2,4]; }
+
+function draw(){
+  const dpr=Math.min(devicePixelRatio||1,2);
+  const w=cv.clientWidth|0, h=cv.clientHeight|0;
+  if(cv.width!==w*dpr||cv.height!==h*dpr){cv.width=w*dpr;cv.height=h*dpr;}
+  gl.viewport(0,0,cv.width,cv.height);
+  gl.clearColor(0.035,0.043,0.055,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+  const ce=Math.cos(S.el), eye=[S.tgt[0]+S.dist*ce*Math.cos(S.az),
+    S.tgt[1]+S.dist*ce*Math.sin(S.az), S.tgt[2]+S.dist*Math.sin(S.el)];
+  const VP=mul(persp(0.85,w/Math.max(h,1),0.05,300),lookAt(eye,S.tgt,[0,0,1]));
+  if(nLine){
+    gl.useProgram(L); gl.uniformMatrix4fv(gl.getUniformLocation(L,"uVP"),false,VP);
+    const ap=gl.getAttribLocation(L,"aPos"), ac=gl.getAttribLocation(L,"aCol");
+    gl.bindBuffer(gl.ARRAY_BUFFER,bLine); gl.enableVertexAttribArray(ap);
+    gl.vertexAttribPointer(ap,3,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bLineC); gl.enableVertexAttribArray(ac);
+    gl.vertexAttribPointer(ac,3,gl.FLOAT,false,0,0);
+    gl.drawArrays(gl.LINES,0,nLine);
+    gl.disableVertexAttribArray(ap); gl.disableVertexAttribArray(ac);}
+  if(nPts){
+    gl.useProgram(P);
+    gl.uniformMatrix4fv(gl.getUniformLocation(P,"uVP"),false,VP);
+    gl.uniformMatrix4fv(gl.getUniformLocation(P,"uModel"),false,S.vehicle?extrinsic():IDENT);
+    gl.uniform1f(gl.getUniformLocation(P,"uScale"),scale);
+    gl.uniform1f(gl.getUniformLocation(P,"uSize"),S.size*dpr);
+    gl.uniform1f(gl.getUniformLocation(P,"uDcut"),S.dcut);
+    gl.uniform1f(gl.getUniformLocation(P,"uAge"),ring.length>1?1:0);
+    gl.uniform1i(gl.getUniformLocation(P,"uMode"),S.mode);
+    gl.uniform2fv(gl.getUniformLocation(P,"uZ"),zRange());
+    const ap=gl.getAttribLocation(P,"aPos"), aa=gl.getAttribLocation(P,"aAtt");
+    gl.bindBuffer(gl.ARRAY_BUFFER,bPos); gl.enableVertexAttribArray(ap);
+    gl.vertexAttribPointer(ap,3,gl.SHORT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bAtt); gl.enableVertexAttribArray(aa);
+    gl.vertexAttribPointer(aa,2,gl.FLOAT,false,0,0);
+    gl.drawArrays(gl.POINTS,0,nPts);}
+  document.getElementById("cam").textContent =
+    `方位 ${(S.az*57.2958).toFixed(0)}°  仰角 ${(S.el*57.2958).toFixed(0)}°  距離 ${S.dist.toFixed(1)} m`;
+}
+
+/* ── 取幀 ────────────────────────────────────────────────────────
+   一次只抓一幀,收到才抓下一幀 —— 不用固定間隔輪詢。網路慢的時候
+   固定間隔會讓請求疊在一起,越積越多最後整個卡死。 */
+let lastSeq=-1, misses=0, rxHz=0, tPrev=0, lat=0;
+async function pump(){
+  if(!S.paused){
+    try{
+      const r=await fetch("/f",{cache:"no-store"});
+      if(r.status===503){
+        show("Jetson 上還沒有點雲。<br>FAST-LIO 起來了嗎?<br>" +
+             "<b>bash ~/slam2d/bringup_all.sh loc</b>");
+        misses++;
+      } else if(r.ok){
+        const b=await r.arrayBuffer();
+        const dv=new DataView(b);
+        const magic=String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3));
+        if(magic!=="LVX1") throw new Error("資料格式不對:"+magic);
+        const seq=dv.getUint32(4,true), n=dv.getUint32(8,true);
+        scale=dv.getFloat32(12,true);
+        const stamp=dv.getFloat64(16,true);
+        if(seq!==lastSeq){
+          const now=performance.now();
+          if(tPrev) rxHz=0.8*rxHz+0.2*(1000/(now-tPrev));
+          tPrev=now; lastSeq=seq; misses=0;
+          lat=Date.now()/1000-stamp;
+          const q=new Int16Array(b.slice(24,24+n*6));
+          const it=new Uint8Array(b.slice(24+n*6,24+n*7));
+          ring.push({q,it,n});
+          while(ring.length>S.acc) ring.shift();
+          upload(); hide(); stats();
+        }
+      }
+    }catch(e){
+      misses++;
+      if(misses>3) show("跟 Jetson 的連線斷了。<br><b>"+e.message+"</b><br>" +
+                        "確認 live_cloud.py 還在跑,以及網路通不通。");
+    }
+  }
+  draw();
+  setTimeout(pump, S.paused?300:0);
+}
+
+const el=id=>document.getElementById(id);
+function stats(){
+  const fresh = misses===0 && rxHz>1;
+  el("pulse").style.background = fresh ? "var(--live)" : (misses>3?"var(--dead)":"var(--stale)");
+  el("kv").innerHTML=[
+    ["點", nPts.toLocaleString()],
+    ["幀率", rxHz.toFixed(1)+" Hz"],
+    ["延遲", (lat*1000).toFixed(0)+" ms"],
+    ["序號", lastSeq],
+  ].map(([k,v])=>`<span data-k="${k}"><b>${v}</b></span>`).join("");
+}
+
+const MODES=[["反射強度",""],["高度",""],["距離",""],["幀齡",""]];
+function mkseg(host,items,onclick){
+  host.innerHTML="";
+  items.forEach((it,i)=>{const b=document.createElement("button");
+    b.textContent=it[0]; if(it[1]) b.title=it[1];
+    b.onclick=()=>{onclick(i); sync();}; host.appendChild(b);});
+}
+mkseg(el("modes"),MODES,i=>S.mode=i);
+mkseg(el("frames"),[["感測器 body","驅動輸出的座標系,機構上斜 29.7°"],
+                    ["車體 base_footprint","套用外參後 z=0 就是地面"]],
+      i=>S.vehicle=(i===1));
+mkseg(el("refs"),[["地面格線",""],["車體外廓",""],["/scan 帶",""]],
+      i=>{const k=["grid","body","band"][i]; REF[k]=!REF[k];});
+for(const [id,key] of [["acc","acc"],["dCut","dcut"],["pSize","size"]]){
+  const e=el(id); e.value=S[key];
+  e.oninput=()=>{S[key]=+e.value; if(key==="acc") while(ring.length>S.acc) ring.shift();
+                 if(key==="acc") upload(); sync();};
+}
+el("pause").onclick=()=>{S.paused=!S.paused; sync();};
+el("reset").onclick=()=>{const p=S.paused; Object.assign(S,JSON.parse(JSON.stringify(HOME)));
+  S.paused=p; el("acc").value=S.acc; el("dCut").value=S.dcut; el("pSize").value=S.size; sync();};
+
+function sync(){
+  [...el("modes").children].forEach((b,i)=>b.setAttribute("aria-pressed",i===S.mode));
+  [...el("frames").children].forEach((b,i)=>b.setAttribute("aria-pressed",(i===1)===S.vehicle));
+  [...el("refs").children].forEach((b,i)=>
+    b.setAttribute("aria-pressed",REF[["grid","body","band"][i]]));
+  el("pause").textContent=S.paused?"繼續":"暫停";
+  el("pause").setAttribute("aria-pressed",S.paused);
+  el("aLab").textContent=S.acc===1?"單幀":S.acc+" 幀";
+  el("dLab").textContent=S.dcut.toFixed(1)+" m";
+  el("sLab").textContent=S.size.toFixed(1)+" px";
+  el("frameNote").innerHTML=S.vehicle
+    ? "已套用外參 <b>(0.155, 0, 0.7305)</b> + pitch <b>29.7°</b>。地面點應該貼在 z=0 的格線上。"
+    : "驅動輸出的座標系。整台光達機構上往下斜 29.7°,地面在這裡是斜的。";
+  const stops=[];
+  for(let i=0;i<=10;i++){const t=i/10;
+    const c=[[0.2777,0.0054,0.3341],[0.1051,1.4046,1.3846],[-0.3309,0.2148,0.0951],
+             [-4.6342,-5.7991,-19.3324],[6.2283,14.1799,56.6906],
+             [4.7764,-13.7451,-65.3530],[-5.4355,4.6459,26.3124]];
+    const v=c[0].map((_,k)=>c[0][k]+t*(c[1][k]+t*(c[2][k]+t*(c[3][k]+t*(c[4][k]+t*(c[5][k]+t*c[6][k]))))));
+    stops.push(`rgb(${v.map(x=>Math.round(Math.max(0,Math.min(1,x))*255)).join(",")})`);}
+  el("ramp").style.background = S.mode===3
+    ? "linear-gradient(90deg,rgb(217,120,64),rgb(51,66,87))"
+    : `linear-gradient(90deg,${stops.join(",")})`;
+  const ends=[["0","反射 255"],[zRange()[0].toFixed(1)+" m",zRange()[1].toFixed(1)+" m"],
+              ["0",S.dcut.toFixed(1)+" m"],["最新","最舊"]][S.mode];
+  el("r0").textContent=ends[0]; el("r1").textContent=ends[1];
+  buildRefs(S.vehicle); draw();
+}
+
+let drag=null;
+cv.addEventListener("pointerdown",e=>{drag={x:e.clientX,y:e.clientY,pan:e.shiftKey||e.button===2};
+  cv.setPointerCapture(e.pointerId);});
+cv.addEventListener("pointermove",e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+  if(drag.pan){const k=S.dist*0.0016;
+    S.tgt[0]+=(Math.sin(S.az)*dx+Math.cos(S.az)*Math.sin(S.el)*dy)*k;
+    S.tgt[1]+=(-Math.cos(S.az)*dx+Math.sin(S.az)*Math.sin(S.el)*dy)*k;
+    S.tgt[2]+=Math.cos(S.el)*dy*k;}
+  else {S.az-=dx*0.006; S.el=Math.max(-1.5,Math.min(1.5,S.el+dy*0.006));}});
+const stop=e=>{if(drag){drag=null; cv.releasePointerCapture(e.pointerId);}};
+cv.addEventListener("pointerup",stop); cv.addEventListener("pointercancel",stop);
+cv.addEventListener("contextmenu",e=>e.preventDefault());
+cv.addEventListener("wheel",e=>{e.preventDefault();
+  S.dist=Math.max(0.6,Math.min(120,S.dist*Math.exp(e.deltaY*0.0011)));},{passive:false});
+
+el("foot").innerHTML =
+  "資料是 <b>/cloud_registered_body</b> —— FAST-LIO 去畸變後、在光達座標系的雲。" +
+  "真正的原始欄位(掃描線、幀內時間)在 <code>CustomMsg</code> 裡,那個格式在 " +
+  "rclpy 只能逐點取值,即時串流會延遲半秒以上,所以要看那些請用快照。";
+sync(); stats(); pump();
+</script>
+</body>
+</html>
