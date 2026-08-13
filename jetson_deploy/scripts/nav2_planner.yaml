@@ -31,10 +31,17 @@ global_costmap:
       # 沒必要的轉換,而且 ITRI 原廠文件也是以 base_footprint 為 costmap 基準。
       robot_base_frame: base_footprint
 
-      # ★ 實際車體尺寸,量自 chassis_description/meshes/DD-M/base_link.STL
-      #   車體本身   X -0.5049 ~ +0.5049   Y -0.3200 ~ +0.3200
+      # ★ 實際車體尺寸,量自 chassis_description/meshes/DD-M-HH/*.STL
+      #   (實機是 DD-M-HH 加高版 —— tf2_echo base_footprint base_link 回 0.209,
+      #    對應 wheel_z=-0.0056939;DD-M 是 0.2032。)
+      #
+      #   車體本身   X -0.5050 ~ +0.5049   Y -0.3400 ~ +0.3400
       #   含輪子     Y 外緣 ±0.3718(輪關節 ±0.31105 + 輪寬外側 0.0607)
-      #   輪子 X 只到 ±0.4875,被車體包住,所以長度由車體決定。
+      #   輪子 X 只到 ±0.4925,被車體包住,所以長度由車體決定。
+      #
+      #   ★ 這組數字在 DD-M 和 DD-M-HH 之間是一樣的:兩者輪距(0.31105)、
+      #     輪子 mesh、車體長度(±0.505)都相同,只差車高和 wheel_z。
+      #     所以車型認錯不會影響 footprint —— 但會影響 BOX_Z,見 robot_tf.sh。
       #
       #   之前的 robot_radius: 0.20 是暫定值,而實際外接圓是
       #   sqrt(0.505^2 + 0.372^2) = 0.627 m —— 差了三倍多。

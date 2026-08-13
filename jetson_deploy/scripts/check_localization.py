@@ -35,6 +35,9 @@ from tf2_ros import Buffer, TransformListener
 
 TOL = 0.25          # 命中容差(公尺)。0.25 = 5 個格子,容得下地圖本身的量化誤差
 MAP_FRAME = "map"
+# 最近鄰只搜鄰近 9 格(邊長 TOL),所以量得到的距離上限是 1.5*TOL*sqrt(2)。
+# 超過的一律當「附近沒有牆」,不能拿哨兵值去算中位數。
+CAP = 1.5 * TOL * math.sqrt(2)
 
 
 def load_map(yaml_path):
@@ -103,6 +106,9 @@ def main():
 
     # 用格點雜湊做最近鄰。scipy 不一定裝了,而且這樣夠快:
     # 把佔據格丟進以 TOL 為邊長的格子,查詢時只看鄰近 9 格。
+    #
+    # ★ 只看 9 格 = 量得到的距離有上限。超過上限的點 near() 回傳哨兵值,
+    #   呼叫端要用 CAP 濾掉,不能直接拿去算中位數。
     cell = TOL
     grid = {}
     for x, y in occ:
@@ -169,9 +175,16 @@ def main():
         return 1
 
     rate = 100.0 * stat["hit"] / stat["pts"]
-    ds = sorted(stat["d"])
-    med = ds[len(ds) // 2]
-    p90 = ds[int(len(ds) * 0.9)]
+    # ★ near() 找不到牆時回傳 sqrt(1e9) = 31622.777。那是哨兵值,不是距離 ——
+    #   混進中位數裡就會印出「距離中位數 31622.777 m」這種無意義的東西
+    #   (2026-08-13 實測)。分開統計:有找到的算距離,沒找到的算比例。
+    #
+    #   搜尋範圍只有鄰近 9 格(邊長 TOL),所以量得到的距離上限是
+    #   1.5 * TOL * sqrt(2) ≈ %.2f m —— 超過就一律是「附近沒有牆」。
+    ds = sorted(d for d in stat["d"] if d < CAP)
+    miss = stat["pts"] - len(ds)
+    med = ds[len(ds) // 2] if ds else None
+    p90 = ds[int(len(ds) * 0.9)] if ds else None
 
     try:
         t = buf.lookup_transform(MAP_FRAME, "base_footprint", rclpy.time.Time())
@@ -185,7 +198,14 @@ def main():
 
     print("\n%d 幀 / %d 點" % (stat["scans"], stat["pts"]))
     print("  命中率(距離最近牆面 <= %.2f m)  %.1f %%" % (TOL, rate))
-    print("  距離中位數 %.3f m   90%% 分位 %.3f m" % (med, p90))
+    if med is not None:
+        print("  在 %.2f m 內找得到牆的點:%d(%.1f %%)"
+              % (CAP, len(ds), 100.0 * len(ds) / stat["pts"]))
+        print("    這些點的距離:中位數 %.3f m   90%% 分位 %.3f m" % (med, p90))
+    print("  附近完全沒有牆的點:%d(%.1f %%)"
+          % (miss, 100.0 * miss / stat["pts"]))
+    print("    ↑ 這個比例高 = 掃到的東西在地圖上根本不存在,")
+    print("      通常是車不在地圖範圍內(例如停在車庫),不是參數問題")
     print()
     if rate > 70:
         print("  ✓ 定位good")
