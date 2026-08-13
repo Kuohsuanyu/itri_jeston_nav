@@ -39,7 +39,10 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import PointCloud2
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8100
-STEP = int(sys.argv[2]) if len(sys.argv) > 2 else 2      # 每 STEP 點取 1
+# 每 STEP 點取 1。預設 1 —— /cloud_registered_body 已經被 FAST-LIO 抽稀過
+# (point_filter_num 4 + filter_size_surf 0.5),實測一幀只有 4778 點,
+# 再抽一半就太稀了。要更省頻寬才調大。
+STEP = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 TOPIC = "/cloud_registered_body"
 
 # int16 量化。0.002 m 一階 -> ±65.5 m,涵蓋 Mid-360 的 40 m 射程還有餘裕。
@@ -80,8 +83,7 @@ def parse(msg):
 class Sub(Node):
     def __init__(self):
         super().__init__("live_cloud")
-        self.t_last = time.time()
-        self.hz = 0.0
+        self.times = []          # 最近的到達時刻,用來算真實幀率
         self.create_subscription(
             PointCloud2, TOPIC, self.cb,
             QoSProfile(depth=2, reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -89,11 +91,16 @@ class Sub(Node):
         self.get_logger().info("subscribed %s" % TOPIC)
 
     def cb(self, msg):
+        # ★ 幀率用「兩秒內收到幾則」算,不要用 EMA。
+        #   原本寫 hz = 0.8*hz + 0.2/dt,兩則訊息幾乎同時到時 dt 趨近 0,
+        #   0.2/dt 會爆成幾百,再花二十幾幀才衰減回來 —— 實測顯示 49 Hz
+        #   而真實值是 8.9 Hz。計數法沒有這個問題。
         now = time.time()
-        dt = now - self.t_last
-        self.t_last = now
-        if dt > 0:
-            self.hz = 0.8 * self.hz + 0.2 / dt if self.hz else 1.0 / dt
+        self.times.append(now)
+        while self.times and now - self.times[0] > 2.0:
+            self.times.pop(0)
+        span = now - self.times[0] if len(self.times) > 1 else 0.0
+        hz = (len(self.times) - 1) / span if span > 0 else 0.0
 
         xyz, inten = parse(msg)
         raw_n = len(xyz)
@@ -108,7 +115,7 @@ class Sub(Node):
                + q.tobytes() + it.tobytes())
         with _lock:
             _frame.update(buf=buf, seq=_frame["seq"] + 1, stamp=stamp,
-                          n=len(q), hz=self.hz, raw=raw_n)
+                          n=len(q), hz=hz, raw=raw_n)
 
 
 class H(http.server.BaseHTTPRequestHandler):
