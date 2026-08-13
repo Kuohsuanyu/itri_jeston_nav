@@ -35,7 +35,8 @@ export ROS_DOMAIN_ID=0
 
 MODE="${1:-map}"
 MAPFILE="$2"
-BASE_IP=192.168.40.160
+# 位址一律從 robot_env.sh 來 —— 那裡是正本,不要在這裡寫死。
+source ~/slam2d/robot_env.sh
 
 say()  { echo; echo "═══ $* ═══"; }
 ok()   { printf "  \033[32m✓\033[0m %s\n" "$1"; }
@@ -51,11 +52,22 @@ for i in $(seq 1 30); do
     sleep 3
 done
 if ping -c 2 -W 2 "$BASE_IP" > /dev/null 2>&1; then
-    ok "底盤 $BASE_IP 在線"
+    R=$(ping -c 10 -q "$BASE_IP" 2>/dev/null | tail -1 | sed -E 's|.*= [0-9.]+/([0-9.]+)/[0-9.]+/([0-9.]+) ms|平均 \1 ms  抖動 \2 ms|')
+    ok "底盤 $BASE_IP 在線($(ip route get "$BASE_IP" 2>/dev/null | grep -oE 'dev [a-zA-Z0-9]+')) $R"
 else
-    bad "底盤 90 秒內沒上線"
-    echo "     先開底盤再跑這支。沒有底盤的話用:"
-    echo "     bash ~/slam2d/startall.sh && bash ~/slam2d/robot_tf.sh standalone"
+    bad "底盤 $BASE_IP 90 秒內沒上線"
+    # ★ 2026-08-13 改走有線之後最常見的失誤:交換器沒接、或樹莓派的
+    #   有線介面沒設 IP。先確認是「底盤沒開」還是「只是有線那條不通」。
+    if ping -c 2 -W 2 "$BASE_IP_WIFI" > /dev/null 2>&1; then
+        echo "     但無線 $BASE_IP_WIFI 通得到 —— 底盤是開著的,是**有線這條**不通。"
+        echo "     檢查:交換器的線、樹莓派上 ip addr show(要有 $BASE_IP)"
+        echo "     臨時要用無線跑的話:"
+        echo "       BASE_IP=$BASE_IP_WIFI bash ~/slam2d/bringup_all.sh $MODE $MAPFILE"
+    else
+        echo "     無線 $BASE_IP_WIFI 也不通 —— 底盤應該是沒開機。"
+        echo "     沒有底盤的話可以只跑感測器:"
+        echo "       bash ~/slam2d/startall.sh && bash ~/slam2d/robot_tf.sh standalone"
+    fi
     exit 1
 fi
 O=$(hz /odom 10)

@@ -21,7 +21,19 @@
   initialPeersList 直接寫死底盤的 IP。Fast DDS 會**額外**用單播對那個位址
   發參與者公告,不必等 multicast。multicast 保持開啟,兩條路並用。
 
-  ★ 底盤換 IP 的話這裡要改。目前 itri-base = 192.168.40.160。
+  ★ 底盤換 IP 的話這裡要改。IP 的正本在 robot_env.sh(BASE_IP),
+    但 XML 沒辦法讀 shell 變數,所以這裡是**唯一一份需要手動同步的複本**。
+    改 robot_env.sh 的時候記得回來改這裡。
+
+  ★ 2026-08-13 起底盤走有線 192.168.0.101。無線 192.168.40.160 也留著:
+    initialPeersList 只是「額外用單播發探索公告」,多寫一個位址的成本是
+    每 100 ms 幾十個位元組,但少寫一個就可能在切換網路時整個探索不到。
+    兩個都列,哪一條通就走哪一條。
+
+  ★ 這裡列出位址**不等於**資料會走那條路。實際走哪條由對端公告的
+    locator 決定 —— 樹莓派兩張網卡都開著時,它會同時公告有線和無線,
+    對端挑哪個不保證。要確定走有線,樹莓派那邊要:
+        sudo ip link set wlan0 down
 
   ★ 這個檔要靠 FASTRTPS_DEFAULT_PROFILES_FILE 指定,而且是**每個行程各自**
     讀的 —— 只有設了環境變數的那個行程會生效。所以想讓 ros2 node list
@@ -43,7 +55,13 @@
 
         <builtin>
           <initialPeersList>
-            <!-- 底盤樹莓派 itri-base -->
+            <!-- 底盤樹莓派 itri-base:有線(主要)-->
+            <locator>
+              <udpv4>
+                <address>192.168.0.101</address>
+              </udpv4>
+            </locator>
+            <!-- 同一台的無線位址,有線沒接好時的退路 -->
             <locator>
               <udpv4>
                 <address>192.168.40.160</address>

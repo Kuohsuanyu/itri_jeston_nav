@@ -16,6 +16,7 @@
 #    sudoers 沒裝的話會排程成功但執行失敗,而且只在底盤的 log 裡才看得到。
 source /opt/ros/humble/setup.bash
 source ~/chassis_ws/install/setup.bash 2>/dev/null
+source ~/slam2d/robot_env.sh          # BASE_IP 的正本
 export ROS_DOMAIN_ID=0
 
 CONFIRM="SHUTDOWN"      # 要跟底盤 system_param.yaml 的 confirm_code 一致
@@ -30,11 +31,17 @@ fi
 DELAY="${1:-10}"
 
 echo "=== 底盤在不在 ==="
-if ! ping -c 2 -W 2 192.168.40.160 > /dev/null 2>&1; then
-    echo "  ✗ ping 不到 192.168.40.160 —— 已經關了,或還沒開機"
+if ! ping -c 2 -W 2 "$BASE_IP" > /dev/null 2>&1; then
+    echo "  ✗ ping 不到 $BASE_IP"
+    if ping -c 2 -W 2 "$BASE_IP_WIFI" > /dev/null 2>&1; then
+        echo "    但無線 $BASE_IP_WIFI 通 —— 底盤開著,是有線那條不通。"
+        echo "    要用無線關機:BASE_IP=$BASE_IP_WIFI bash ~/slam2d/base_off.sh"
+    else
+        echo "    無線也不通 —— 已經關了,或還沒開機"
+    fi
     exit 1
 fi
-echo "  通"
+echo "  通($BASE_IP)"
 
 echo
 echo "=== 關機前記錄 ==="
@@ -88,7 +95,9 @@ echo
 echo "=== 等待斷線(最多 60 秒)==="
 for i in $(seq 1 12); do
     sleep 5
-    if ! ping -c 2 -W 2 192.168.40.160 > /dev/null 2>&1; then
+    # ★ 有線和無線都要斷才算真的關機。只斷有線可能只是網路線鬆了。
+    if ! ping -c 2 -W 2 "$BASE_IP" > /dev/null 2>&1 &&
+       ! ping -c 2 -W 2 "$BASE_IP_WIFI" > /dev/null 2>&1; then
         echo "  ✓ 第 $((i * 5)) 秒斷線 —— 已關機"
         exit 0
     fi

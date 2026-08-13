@@ -9,6 +9,7 @@
 # painted onto whatever is behind the wall).
 source /opt/ros/humble/setup.bash
 source ~/ws_livox/install/setup.bash
+source ~/slam2d/robot_env.sh          # WIRED_IF / LIDAR_IP / BASE_IP 的正本
 export ROS_DOMAIN_ID=0
 
 start_capped() {
@@ -62,14 +63,19 @@ sleep 2
 echo "  cleared"
 
 echo
-echo "[1/8] wait for lidar NIC"
+echo "[1/8] wait for wired NIC (lidar + chassis share this segment since 2026-08-13)"
 for i in $(seq 1 30); do
-    C=$(cat /sys/class/net/enP8p1s0/carrier 2>/dev/null || echo 0)
-    N=$(ip -4 -o addr show enP8p1s0 2>/dev/null | grep -c "192.168.0.100")
+    C=$(cat "/sys/class/net/$WIRED_IF/carrier" 2>/dev/null || echo 0)
+    N=$(ip -4 -o addr show "$WIRED_IF" 2>/dev/null | grep -c "$JETSON_WIRED_IP")
     [ "$C" = "1" ] && [ "$N" -ge 1 ] && { echo "  ready after ${i}s"; break; }
     sleep 1
 done
-ping -c1 -W2 192.168.0.50 > /dev/null 2>&1 && echo "  lidar responds" || echo "  WARN: lidar no ping"
+ping -c1 -W2 "$LIDAR_IP" > /dev/null 2>&1 \
+    && echo "  lidar $LIDAR_IP responds" || echo "  WARN: lidar $LIDAR_IP no ping"
+# 底盤現在也在這條線上。這裡只是報告,等待底盤是 bringup_all.sh 的事。
+ping -c1 -W2 "$BASE_IP" > /dev/null 2>&1 \
+    && echo "  chassis $BASE_IP responds (wired)" \
+    || echo "  note: chassis $BASE_IP no ping (may not be powered yet)"
 
 echo "[2/8] livox driver"
 setsid nohup ros2 launch livox_ros_driver2 msg_MID360_launch.py \
