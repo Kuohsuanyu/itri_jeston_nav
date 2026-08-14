@@ -8,6 +8,10 @@
 #   bash ~/slam2d/robot.sh home [航點]    回到初始點(定位跑掉時用)
 #   bash ~/slam2d/robot.sh mark <名字>    把目前位置存成航點
 #
+#   bash ~/slam2d/robot.sh nav            ★ 自主導航(車會動)
+#   bash ~/slam2d/robot.sh nav dry        只規劃不動,先看路徑
+#   bash ~/slam2d/robot.sh nav stop       停
+#
 #   bash ~/slam2d/robot.sh status         現在是什麼模式、資料流正不正常
 #   bash ~/slam2d/robot.sh stop           全部停掉
 #   bash ~/slam2d/robot.sh view           開即時三維點雲(:8100)
@@ -88,6 +92,11 @@ use)
     echo "    不然要用 RViz 的 2D Pose Estimate 指定實際位置。"
     echo
     exec bash "$D/bringup_all.sh" loc "$MAP"
+    ;;
+
+nav)
+    hdr "自主導航"
+    exec bash "$D/start_nav.sh" "$@"
     ;;
 
 home)

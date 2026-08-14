@@ -1,0 +1,262 @@
+# 完整導航:規劃 + 循跡 + 行為樹。點目標點,車就自己開過去。
+#
+# ★★ 這是這台車第一次**自主移動**。速度全部設在最慢,人要在旁邊。★★
+#
+# ── 速度為什麼設這麼慢 ──────────────────────────────────────────
+#   desired_linear_vel  0.10 m/s   走路速度的五分之一
+#   max_angular_vel     0.15 rad/s 轉一圈要 42 秒
+#
+# 這台車 60 公斤以上,而且有兩個感知上的硬限制:
+#
+#   1. /scan 的 range_min 是 0.70 m —— **車前 70 公分是盲區**。
+#      人走到很近時反而從 costmap 上消失。0.10 m/s 的話,從發現障礙到
+#      停下來只需要幾公分,盲區才不會變成撞擊。
+#
+#   2. /scan 只有 10 Hz。0.10 m/s 表示每一幀之間車只走 1 公分,
+#      控制器不會在兩幀之間衝過頭。
+#
+# 確認穩定之後再往上調,一次調一點,每次都重新測「前面有人會不會停」。
+#
+# ── 規劃器和控制器的選擇 ────────────────────────────────────────
+#   NavFn                 Dijkstra,全域路徑。走廊這種結構足夠,不需要 Smac。
+#   RegulatedPurePursuit  循跡。它**不會自己繞開人**,而是減速到停、等障礙
+#                         離開再走 —— 正好是你要的行為。要繞路是靠
+#                         controller_patience 逾時之後觸發重新規劃。
+
+# ═══════════════════════════════════════════════════════════════
+# 全域規劃
+# ═══════════════════════════════════════════════════════════════
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5          # 到不了精確目標點時,退而求其次的半徑
+      use_astar: false
+      allow_unknown: true     # 地圖上的灰色區域允許穿越 —— 車庫那段建得
+                              # 比較零碎,設 false 會規劃不出來
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      # 實際外廓量自 chassis_description/meshes/DD-M-HH。決定尺寸的是
+      # 輪子外緣 ±0.3718(輪關節 0.31105 + 輪寬外側 0.0607)和車體長度
+      # ±0.505。這裡取整成 0.52 / 0.39,保守一點。
+      footprint: "[[0.52, 0.39], [0.52, -0.39], [-0.52, -0.39], [-0.52, 0.39]]"
+      footprint_padding: 0.02
+      resolution: 0.05
+      track_unknown_space: true
+      always_send_full_costmap: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          max_obstacle_height: 2.0
+          raytrace_max_range: 30.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 25.0
+          obstacle_min_range: 0.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # ★ inflation_radius 必須大於內切半徑(0.39 + padding 0.02 = 0.41),
+        #   否則機器人自己所在的格子就會是 inscribed(值 99),規劃直接回空路徑。
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
+
+# ═══════════════════════════════════════════════════════════════
+# 局部循跡
+# ═══════════════════════════════════════════════════════════════
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    controller_frequency: 10.0        # 跟 /scan 一樣 10 Hz,再高只是空轉
+    min_x_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      # ★ 速度只有 0.10 m/s,10 秒才走 1 公尺。門檻設太嚴會在正常減速時
+      #   誤判成「卡住」。0.10 m / 15 秒 = 平均 6.7 mm/s,很寬鬆。
+      required_movement_radius: 0.10
+      movement_time_allowance: 15.0
+
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.30
+      stateful: true
+
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      # ── 速度:全部最慢 ──────────────────────────────────────
+      desired_linear_vel: 0.10
+      max_angular_vel: 0.15
+      min_approach_linear_velocity: 0.03
+      approach_velocity_scaling_dist: 0.8
+
+      # ── 前視距離 ────────────────────────────────────────────
+      # 慢速要短前視,不然轉彎會切內角。0.6 m 大約是 6 秒的行程。
+      lookahead_dist: 0.60
+      min_lookahead_dist: 0.40
+      max_lookahead_dist: 0.90
+      use_velocity_scaled_lookahead_dist: true
+      lookahead_time: 6.0
+
+      # ── 遇到障礙就減速停下(你要的行為)──────────────────
+      # 前方有東西時線速度按「離障礙多近」等比例縮,近到一定程度就是 0。
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: true
+      cost_scaling_dist: 0.9        # 離障礙 0.9 m 開始減速
+      cost_scaling_gain: 1.0
+      inflation_cost_scaling_factor: 3.0
+      # 轉彎半徑小於這個值時也減速 —— 避免慢車在急彎甩尾
+      regulated_linear_scaling_min_radius: 0.90
+      regulated_linear_scaling_min_speed: 0.05
+
+      # ── 碰撞偵測 ────────────────────────────────────────────
+      # 沿預定路徑往前投影,撞到就停。1.2 秒 x 0.10 m/s = 12 公分,
+      # 對這個速度足夠;調大會讓它在走廊裡過度保守。
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.2
+
+      # ── 原地轉向 ────────────────────────────────────────────
+      # 路徑起點方向差太多時先原地轉,不要邊轉邊走(差動輪這樣比較準)。
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.5
+      rotate_to_heading_angular_vel: 0.15
+      max_angular_accel: 0.5
+
+      allow_reversing: false        # ★ 不要倒車:光達的盲區在車後更大
+      transform_tolerance: 0.3
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: multi_odom      # ★ 局部圖跟著里程計走,不是 map ——
+                                    #   AMCL 修正時整張局部圖才不會跳
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 6
+      height: 6
+      resolution: 0.05
+      footprint: "[[0.52, 0.39], [0.52, -0.39], [-0.52, -0.39], [-0.52, 0.39]]"
+      footprint_padding: 0.02
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          max_obstacle_height: 2.0
+          raytrace_max_range: 12.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 10.0
+          obstacle_min_range: 0.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
+      always_send_full_costmap: true
+
+# ═══════════════════════════════════════════════════════════════
+# 行為樹:RViz 的「Nav2 Goal」送到這裡
+# ═══════════════════════════════════════════════════════════════
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false
+    global_frame: map
+    robot_base_frame: base_footprint
+    odom_topic: /odometry/filtered
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    # ★ 路被擋住多久才重新規劃。設短的話人只是路過就會急著繞路;
+    #   設長就會一直等。5 秒是「等一下,還不走就繞」。
+    wait_for_service_timeout: 1000
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator/NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator/NavigateThroughPosesNavigator"
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: false
+    local_costmap_topic: local_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_costmap_topic: global_costmap/costmap_raw
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    local_frame: multi_odom
+    global_frame: map
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.3
+    # ★ 復原行為的速度也要壓到最慢。預設會用 0.5 rad/s 原地猛轉。
+    max_rotational_vel: 0.15
+    min_rotational_vel: 0.05
+    rotational_acc_lim: 0.5
+
+# ═══════════════════════════════════════════════════════════════
+# 速度平滑:最後一道保險
+# ═══════════════════════════════════════════════════════════════
+# ★ 就算上游算出比較大的速度,這裡也會卡住。加速度限制讓車不會突然衝出去。
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: false
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.10, 0.0, 0.15]     # x, y, theta —— 硬上限
+    min_velocity: [-0.05, 0.0, -0.15]
+    max_accel: [0.30, 0.0, 0.60]
+    max_decel: [-0.60, 0.0, -1.00]      # 減速可以比加速快,煞得住
+    odom_topic: "/odometry/filtered"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0               # 1 秒沒收到指令就歸零 —— 上游掛了車會停
+
+lifecycle_manager_navigation:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true
+    # ★ 順序有意義:costmap 依賴的節點要先 active。
+    node_names:
+      - controller_server
+      - planner_server
+      - behavior_server
+      - bt_navigator
+      - velocity_smoother
+    bond_timeout: 0.0
