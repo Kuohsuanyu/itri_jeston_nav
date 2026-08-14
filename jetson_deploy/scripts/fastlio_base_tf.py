@@ -24,6 +24,7 @@
   14.5% 的尺度誤差 —— 繞一圈回不到原點,迴路閉合必然失敗。
 """
 import math
+import sys
 
 import numpy as np
 import rclpy
@@ -36,8 +37,23 @@ ODOM_TOPIC = "/Odometry"
 # ★ 2026-08-11 從 "odom" 改名。standalone 模式理論上底盤沒開,但要是
 #   底盤中途上線(publish_tf 又是 true),兩邊都叫 odom 就撞名了。
 #   換個名字就永遠不會撞。slam_params.yaml 的 odom_frame 要跟著改。
-ODOM_FRAME = "lidar_odom"
-BASE_FRAME = "box_link"
+#
+# ★ 2026-08-13 改成可以從命令列指定,因為這支現在有兩種用途:
+#
+#   python3 fastlio_base_tf.py                              standalone 模式
+#       lidar_odom -> box_link,底盤沒開時用
+#
+#   python3 fastlio_base_tf.py multi_odom base_footprint flat   取代 EKF
+#       輪速壞掉之後,EKF 只剩一個輸入,那時它不是在融合而是在加雜訊:
+#           FAST-LIO 輸入        漂移  0.02 mm/s
+#           EKF 輸出             漂移 22.54 mm/s      1000 倍
+#       直接把 FAST-LIO 的位姿換算成 TF,漂移就等於 FAST-LIO 自己的。
+#
+# flat:把 z / roll / pitch 歸零。二維建圖和 AMCL 只用 x/y/yaw,
+#       留著三維分量只會讓 base_footprint 浮起來或傾斜(它依定義在地面上)。
+ODOM_FRAME = sys.argv[1] if len(sys.argv) > 1 else "lidar_odom"
+BASE_FRAME = sys.argv[2] if len(sys.argv) > 2 else "box_link"
+FLAT = "flat" in sys.argv[3:]
 BODY_FRAME = "body"
 
 
@@ -124,6 +140,17 @@ class BaseTf(Node):
                 "光達那 29.7 度的傾斜到此為止,不會傳進二維投影")
 
         T = self.T_origin @ T_ci_box
+
+        if FLAT:
+            # 只留 x / y / yaw。base_footprint 依定義就在地面上(z=0)且水平,
+            # 發出帶 z 和 roll/pitch 的變換會讓整個車體模型浮起來或歪掉,
+            # 而 slam_toolbox 和 AMCL 反正也只用二維。
+            yaw = math.atan2(T[1, 0], T[0, 0])
+            c, s = math.cos(yaw), math.sin(yaw)
+            T = np.array([[c, -s, 0.0, T[0, 3]],
+                          [s,  c, 0.0, T[1, 3]],
+                          [0.0, 0.0, 1.0, 0.0],
+                          [0.0, 0.0, 0.0, 1.0]])
 
         t = TransformStamped()
         t.header.stamp = msg.header.stamp

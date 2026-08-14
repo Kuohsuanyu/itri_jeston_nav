@@ -141,6 +141,9 @@ pkill -f tf_static_repeat.py 2>/dev/null
 pkill -f tf_relay_wheels.py 2>/dev/null
 pkill -f odom_cov_relay.py 2>/dev/null
 pkill -f ekf_node 2>/dev/null
+# ★ 直通模式的節點也要殺。漏掉的話切換 USE_EKF 時會有兩個來源同時發
+#   multi_odom -> base_footprint —— tf2 不報錯,只會交替採用兩個答案。
+pkill -f fastlio_base_tf.py 2>/dev/null
 sleep 2
 
 case "$MODE" in
@@ -204,21 +207,55 @@ sys.exit(0 if hit else 1)
         exit 1
     fi
     echo "  已確認沒有人發 base_footprint 的 TF"
-    cd "$D" && setsid nohup python3 odom_cov_relay.py \
-        > /tmp/odom_relay.log 2>&1 < /dev/null &
-    sleep 5
-    pgrep -f odom_cov_relay.py > /dev/null \
-        && echo "  odom_cov_relay OK" \
-        || { echo "  odom_cov_relay DEAD"; tail -10 /tmp/odom_relay.log; exit 1; }
 
-    setsid nohup ros2 run robot_localization ekf_node \
-        --ros-args --params-file "$D/ekf_multi.yaml" \
-        -r __node:=ekf_filter_node \
-        > /tmp/ekf.log 2>&1 < /dev/null &
-    sleep 8
-    pgrep -f ekf_node > /dev/null \
-        && echo "  ekf_node OK" \
-        || { echo "  ekf_node DEAD"; tail -12 /tmp/ekf.log; exit 1; }
+    # ── ★ 2026-08-13:預設不走 EKF,改成 FAST-LIO 直通 ──────────────
+    #
+    # 底盤的編碼器回授是死的(rpm 恆為 0、/odom 的位姿小數 16 位完全凍結),
+    # 輪速那一路已經停用。EKF 只剩一個輸入時,它不是在融合,是在加雜訊 ——
+    # 實測車靜止 45 秒:
+    #
+    #     FAST-LIO 輸入        總位移 0.017 m   漂移  0.02 mm/s   角度  0.0 度/分
+    #     EKF 輸出             總位移 1.258 m   漂移 22.54 mm/s   角度 16.3 度/分
+    #
+    # 輸出比輸入差 1000 倍。試過補上速度觀測(微分位姿餵 twist)反而更糟,
+    # 因為 differential 模式本來就把位姿差分成速度,同一份資訊進去兩次,
+    # 而微分放大的雜訊(靜止時 linear.y 讀到 0.039 m/s)全被積分成位移。
+    #
+    # 直通就沒有這些問題:漂移等於 FAST-LIO 自己的 0.02 mm/s。
+    # fastlio_base_tf.py 順便把原點釘在啟動位置並**扶正** —— 光達機構上斜
+    # 29.7 度,不扶正的話二維投影會有 cos(29.7°) = 14.5% 的尺度誤差,
+    # 繞一圈回不到原點,迴路閉合必然失敗。
+    #
+    # ★ 底盤修好之後改回 EKF:USE_EKF=1 bash robot_tf.sh fused
+    #   判斷修好了沒:遙控時 ros2 topic echo /chassis/motor_state --once
+    #   的 rpm 不是 0。那時把 ekf_multi.yaml 的 odom1 註解拿掉。
+    if [ "${USE_EKF:-0}" = "1" ]; then
+        echo "  里程計來源:EKF(USE_EKF=1)"
+        cd "$D" && setsid nohup python3 odom_cov_relay.py \
+            > /tmp/odom_relay.log 2>&1 < /dev/null &
+        sleep 5
+        pgrep -f odom_cov_relay.py > /dev/null \
+            && echo "  odom_cov_relay OK" \
+            || { echo "  odom_cov_relay DEAD"; tail -10 /tmp/odom_relay.log; exit 1; }
+
+        setsid nohup ros2 run robot_localization ekf_node \
+            --ros-args --params-file "$D/ekf_multi.yaml" \
+            -r __node:=ekf_filter_node \
+            > /tmp/ekf.log 2>&1 < /dev/null &
+        sleep 8
+        pgrep -f ekf_node > /dev/null \
+            && echo "  ekf_node OK" \
+            || { echo "  ekf_node DEAD"; tail -12 /tmp/ekf.log; exit 1; }
+    else
+        echo "  里程計來源:FAST-LIO 直通(輪速壞掉,EKF 沒有東西可融合)"
+        cd "$D" && setsid nohup python3 fastlio_base_tf.py \
+            multi_odom base_footprint flat \
+            > /tmp/lidar_tf.log 2>&1 < /dev/null &
+        sleep 6
+        pgrep -f fastlio_base_tf.py > /dev/null \
+            && echo "  fastlio_base_tf OK" \
+            || { echo "  fastlio_base_tf DEAD"; tail -12 /tmp/lidar_tf.log; exit 1; }
+    fi
     ;;
 chassis)
     echo "--- 里程計:底盤輪速(樹莓派發 odom -> base_footprint -> base_link)---"
