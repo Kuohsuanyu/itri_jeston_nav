@@ -42,6 +42,53 @@
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
 
+    <!-- ★ 2026-08-14:DDS 只走有線,本機交給共享記憶體。
+         ─────────────────────────────────────────────────────────
+         為什麼要限制:樹莓派兩張網卡都開著就同時公告兩個 locator,
+         對端挑哪一條不保證,實測流量被切成兩半。而兩條差三個數量級:
+             有線 192.168.0.101   0% 遺失  平均 0.296 ms  抖動 0.032 ms
+             無線 192.168.40.160  0% 遺失  平均 218 ms    抖動 215 ms
+         挑到無線就是「有時候延遲」和「旋轉不穩」。
+
+         interfaceWhiteList **只對自訂 transport 生效**,所以一定要
+         useBuiltinTransports=false。但關掉內建的同時也關掉了內建的 SHM,
+         而 SHM 正是同機不同行程之間在用的 —— 沒補回來就會變成
+         「遠端正常、本機反而死掉」。
+
+         ★ 我第一次補的 SHM 描述器只寫了 <type>SHM</type>,沒有任何參數,
+           結果 SHM 沒真的生效,本機退回被白名單擋住的 UDP。症狀:
+               /tf_static  base_link <- base_footprint(來自底盤,遠端) ✓
+               /tf_static  box_link / body / camera_link(本機)        ✗
+               /scan 完全沒有(p2l 和 FAST-LIO 都在本機)
+           而三個 static publisher 都活著,log 是 "Spinning until stopped"。
+
+         補上 segment_size / port_queue_capacity / healthy_check_timeout_ms
+         之後就正常了。驗證方法必須用**兩個獨立行程** —— 同一個行程裡的
+         兩個節點走 intra-process,根本不經過 transport,測了會過但沒意義。
+
+         白名單只留 192.168.0.100:本機靠 SHM,不需要 127.0.0.1。
+         (加了也能通,實測 270 則;不加比較乾淨。)
+
+         ★ 筆電不受影響 —— zenoh bridge 對筆電走 TCP 7447,不是 DDS。 -->
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>shm_local</transport_id>
+        <type>SHM</type>
+        <segment_size>4194304</segment_size>
+        <port_queue_capacity>1024</port_queue_capacity>
+        <healthy_check_timeout_ms>1000</healthy_check_timeout_ms>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>udp_wired_only</transport_id>
+        <type>UDPv4</type>
+        <sendBufferSize>8388608</sendBufferSize>
+        <receiveBufferSize>8388608</receiveBufferSize>
+        <interfaceWhiteList>
+          <address>192.168.0.100</address>
+        </interfaceWhiteList>
+      </transport_descriptor>
+    </transport_descriptors>
+
     <participant profile_name="jetson_participant" is_default_profile="true">
       <rtps>
         <!-- 點雲每則 0.36 MB,遠超過單一 UDP datagram,一定會分片。
@@ -49,23 +96,12 @@
         <sendSocketBufferSize>8388608</sendSocketBufferSize>
         <listenSocketBufferSize>8388608</listenSocketBufferSize>
 
-        <!-- ★ 保持 true。2026-08-14 又試了一次「自訂 transport + interfaceWhiteList」
-             ——文件上那是限制 DDS 只走特定網卡的標準做法,而且確實有效:
-             Jetson 從無線送出的 DDS 封包從 869 個掉到 1 個。
-             **但它把跨行程的本機通訊弄壞了。**
-
-             實測(useBuiltinTransports=false,userTransports = SHM + 白名單 UDP):
-                 /tf_static  base_link <- base_footprint   來自底盤(遠端)  ✓ 收得到
-                 /tf_static  box_link / body / camera_link  本機同機行程      ✗ 收不到
-                 三個 static publisher 都活著,log 是 "Spinning until stopped"
-                 /scan 完全沒有(p2l 和 FAST-LIO 都是本機)
-
-             遠端正常、本機不通。中間我做過一次「兩個節點互通」的隔離測試會過,
-             那是誤導 —— 那兩個節點在**同一個行程**裡,intra-process 根本不經過
-             transport。要驗必須用兩個獨立行程。
-
-             所以這條路不通。要把底盤逼到有線,只能在**樹莓派**那端關掉 wlan0。 -->
-        <useBuiltinTransports>true</useBuiltinTransports>
+        <!-- 見檔頭的 transport_descriptors 說明。 -->
+        <useBuiltinTransports>false</useBuiltinTransports>
+        <userTransports>
+          <transport_id>shm_local</transport_id>
+          <transport_id>udp_wired_only</transport_id>
+        </userTransports>
 
         <builtin>
           <initialPeersList>
@@ -75,12 +111,8 @@
                 <address>192.168.0.101</address>
               </udpv4>
             </locator>
-            <!-- 同一台的無線位址,有線沒接好時的退路 -->
-            <locator>
-              <udpv4>
-                <address>192.168.40.160</address>
-              </udpv4>
-            </locator>
+            <!-- ★ 底盤的無線位址已移除:白名單擋掉之後那個位址送不出去,
+                 留著只會讓 Fast DDS 對一條死路重試。 -->
             <!-- 自己,確保本機行程之間一定看得到 -->
             <locator>
               <udpv4>

@@ -42,4 +42,10 @@ JETSON_WIRED_IP="${JETSON_WIRED_IP:-192.168.0.100}"
 # 車內網路用的網卡。startall.sh 會等它拿到位址才啟動光達驅動。
 WIRED_IF="${WIRED_IF:-enP8p1s0}"
 
+# ── DDS 設定檔:所有節點都要吃到 ──────────────────────────────────
+# ★ 這個檔是每個行程各自讀的。原本只有 start_zenoh_jetson.sh 設,等於
+#   白名單只鎖到 bridge,其他節點照樣兩張網卡都廣告 —— 鎖了跟沒鎖一樣。
+#   你自己開的終端機也要 source 才會生效。
+export FASTRTPS_DEFAULT_PROFILES_FILE="$HOME/slam2d/fastdds_peers.xml"
+
 export BASE_IP BASE_IP_WIFI LIDAR_IP JETSON_WIRED_IP WIRED_IF
