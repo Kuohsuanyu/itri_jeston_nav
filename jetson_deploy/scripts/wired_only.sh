@@ -39,15 +39,71 @@
 #
 # ★ ip route 和 iptables 都**不持久**,重開機自動消失。
 #   bringup_all.sh 會在啟動時呼叫這支,所以正常流程不用手動下。
+#
+# ── ★ 順序不能反 ────────────────────────────────────────────────
+# DDS 的端點配對是**建立時決定的**。底盤的節點啟動時如果兩條都通,它挑了
+# 無線就固定下來;之後才切斷無線,只會讓已配對的連線斷掉,**不會**自動
+# 改用有線。2026-08-14 實測:套用後 /odom 立刻掉到 0 則,等 45 秒也沒回來,
+# 還原後馬上恢復 139 則。
+#
+# 所以正確流程是:
+#     1. 在 Jetson 套用這支            bash ~/slam2d/wired_only.sh on
+#     2. 重啟底盤的 ROS(重開樹莓派或重跑它的 bringup)
+#     3. 驗證                           bash ~/slam2d/wired_only.sh status
+#
+# 反過來做的話會直接把底盤資料切斷。
 source ~/slam2d/robot_env.sh
 
-SUDO="sudo -n"
-$SUDO true 2>/dev/null || SUDO="sudo"
+# ── sudo ────────────────────────────────────────────────────────
+# ★ 這支會被 bringup_all.sh 自動呼叫,那時是非互動的,sudo 讀不到密碼
+#   就會**靜默失敗** —— 規則沒設成,但輸出看起來一切正常。
+#   2026-08-14 就這樣白跑了一次。所以這裡要明確檢查並大聲報錯。
+if sudo -n true 2>/dev/null; then
+    SUDO="sudo -n"
+else
+    SUDO=""
+fi
+
+need_sudo() {
+    [ -n "$SUDO" ] && return 0
+    echo "  ✗ 沒有免密碼 sudo,規則設不上(非互動的 SSH 讀不到密碼)"
+    echo
+    echo "    裝一條只允許這兩個指令的規則就好:"
+    echo "      bash ~/slam2d/wired_only.sh install-sudoers"
+    echo
+    echo "    或是自己在有終端機的 shell 裡跑:"
+    echo "      sudo ip route add blackhole $BASE_IP_WIFI"
+    echo "      sudo iptables -I INPUT 1 -s $BASE_IP_WIFI -j DROP"
+    return 1
+}
 
 have_route() { ip route show | grep -q "blackhole $BASE_IP_WIFI"; }
 have_rule()  { $SUDO iptables -C INPUT -s "$BASE_IP_WIFI" -j DROP 2>/dev/null; }
 
 case "${1:-on}" in
+
+install-sudoers)
+    # 只放行這兩個指令,而且參數寫死 —— 不是給整個 ip / iptables 免密碼。
+    F=/etc/sudoers.d/wired-only
+    echo "=== 安裝 $F ==="
+    echo "  只放行兩條指令,參數寫死,不是整個 ip/iptables 免密碼:"
+    T=$(mktemp)
+    cat > "$T" <<RULES
+# 讓 wired_only.sh 可以在非互動的 SSH 下設定路由和防火牆規則。
+# 只放行這幾條,參數完全寫死。
+$USER ALL=(root) NOPASSWD: /usr/sbin/ip route add blackhole $BASE_IP_WIFI
+$USER ALL=(root) NOPASSWD: /usr/sbin/ip route del blackhole $BASE_IP_WIFI
+$USER ALL=(root) NOPASSWD: /usr/sbin/iptables -I INPUT 1 -s $BASE_IP_WIFI -j DROP
+$USER ALL=(root) NOPASSWD: /usr/sbin/iptables -D INPUT -s $BASE_IP_WIFI -j DROP
+$USER ALL=(root) NOPASSWD: /usr/sbin/iptables -C INPUT -s $BASE_IP_WIFI -j DROP
+RULES
+    sed 's/^/    /' "$T"
+    echo
+    echo "  需要你輸入一次密碼:"
+    sudo install -m 0440 -o root -g root "$T" "$F" && rm -f "$T" || { rm -f "$T"; exit 1; }
+    sudo visudo -c -f "$F" && echo "  ✓ 語法檢查通過" || { echo "  ✗ 語法錯,移除"; sudo rm -f "$F"; exit 1; }
+    echo "  ✓ 裝好了。之後 bringup_all.sh 可以自動套用。"
+    exit 0 ;;
 
 status)
     echo "=== wired_only 狀態 ==="
@@ -67,6 +123,7 @@ status)
 
 off)
     echo "=== 還原:允許無線路徑 ==="
+    need_sudo || exit 1
     have_route && { $SUDO ip route del blackhole "$BASE_IP_WIFI" && echo "  已移除 blackhole 路由"; } \
                || echo "  blackhole 路由本來就沒設"
     while have_rule; do
@@ -85,6 +142,7 @@ on|"")
         exit 1
     fi
     echo "  有線 $BASE_IP 通,可以切"
+    need_sudo || exit 1
 
     have_route || $SUDO ip route add blackhole "$BASE_IP_WIFI"
     have_route && echo "  ✓ blackhole 路由 $BASE_IP_WIFI"
@@ -92,6 +150,10 @@ on|"")
     have_rule || $SUDO iptables -I INPUT 1 -s "$BASE_IP_WIFI" -j DROP
     have_rule && echo "  ✓ iptables 丟棄來自 $BASE_IP_WIFI 的封包"
 
+    echo
+    echo "  ★ 現在去重啟底盤的 ROS(重開樹莓派,或重跑它的 bringup)。"
+    echo "    不重啟的話已配對的連線會斷掉而且不會自己改走有線 ——"
+    echo "    症狀是 /odom 立刻掉到 0 則。"
     echo
     echo "  驗證(8 秒):底盤的 DDS 流量應該只剩有線"
     for IF in "$WIRED_IF" wlP1p1s0; do
