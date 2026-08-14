@@ -132,7 +132,10 @@ else
 cat <<'MSG'
 ═══ 建圖模式 ═══
   用遙控慢慢繞,地圖會在 /map 上長出來
-  存檔:  網頁 :8090 的「儲存地圖」,或 ros2 service call /slam_toolbox/save_map
+  存檔:  bash ~/slam2d/robot.sh save [名字]
+
+  ★ 地圖原點 map(0,0) = 你**按下建圖時車停的位置**,不是圖片角落。
+    那個點就是以後的「回家」定點 —— 值得在地上做個實體標記。
 MSG
 fi
 echo
