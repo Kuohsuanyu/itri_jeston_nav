@@ -18,23 +18,21 @@
 #    所以流程要固定成:把車停在你要當「初始位置」的定點 -> 開始建圖 ->
 #    繞完存檔。之後 `reset_pose.sh` 不帶參數就是回到那個點,永遠正確。
 #
-# 2. ★ map_saver 訂閱 /map 要用 **volatile**,不是 transient_local。
+# 2. ★ map_saver 的兩個參數都要改,預設值存不出來。實測 2026-08-14:
 #
-#    我原本以為反過來(latched 發布要用 transient_local 才收得到),
-#    2026-08-14 實測證明那是錯的,而且用 transient_local 會直接失敗:
+#    map_subscribe_transient_local 要 **false**(預設 true)
+#      我原本以為 latched 發布非用 transient_local 不可,那是錯的。
+#      zenoh bridge 會在 /map 註冊一個 VOLATILE 端點,訂閱端要求
+#      TRANSIENT_LOCAL 時跟它不相容,rclcpp 就整個放棄:
+#          [WARN]  offering incompatible QoS ... DURABILITY_QOS_POLICY
+#          [ERROR] Failed to spin map subscription
+#      -> 完全不產生檔案。
+#      用 volatile 照樣拿得到 —— slam_toolbox 每 map_update_interval
+#      (1.0 秒)就重發,不必依賴 latch。實測車靜止時 20 秒收到 19 則。
 #
-#      [WARN] New publisher discovered on topic '/map', offering incompatible
-#             QoS. No messages will be sent to it.
-#             Last incompatible policy: DURABILITY_QOS_POLICY
-#      [ERROR] Failed to spin map subscription
-#      -> 完全沒有產生檔案
-#
-#    原因是 zenoh bridge 會在 /map 上註冊一個 VOLATILE 的端點。訂閱端要求
-#    TRANSIENT_LOCAL 時跟它不相容,rclcpp 就整個放棄 spin。
-#
-#    用 volatile 沒有這個問題,而且照樣拿得到地圖 —— slam_toolbox 每
-#    map_update_interval(1.0 秒)就重發一次,不必依賴 latch。
-#    實測兩種方式存出來的內容完全一樣(161x230,佔據 152,空曠 2682)。
+#    save_map_timeout 要 **20.0**(預設 2.0)
+#      2 秒理論上夠(1 Hz),但加上訂閱配對和第一則的傳輸就很邊緣,
+#      實測會間歇性 "Failed to spin map subscription"。給寬沒有代價。
 #
 # 3. ★ 存完一定要驗證圖不是空的。這是會安靜失敗的那種錯誤:
 #    檔案有產生、大小正常、yaml 也對,打開卻整片灰。所以下面會實際解析
@@ -101,31 +99,36 @@ PY
 
 echo
 echo "=== 存 $OUT ==="
-# ★ transient_local 必須是 false,見檔頭第 2 點(true 會因為 bridge 的
-#   VOLATILE 端點不相容而完全失敗)
-timeout 60 ros2 run nav2_map_server map_saver_cli \
+# ★ 兩個參數都是實測調出來的,不要改回預設:
+#
+#   map_subscribe_transient_local:=false
+#       true 會撞上 zenoh bridge 在 /map 註冊的 VOLATILE 端點:
+#         [WARN]  offering incompatible QoS ... DURABILITY_QOS_POLICY
+#         [ERROR] Failed to spin map subscription
+#       然後**完全不產生檔案**。
+#
+#   save_map_timeout:=20.0
+#       預設 2.0 秒太短,實測會 "Failed to spin map subscription"。
+#       /map 車靜止時仍以約 1 Hz 發布(20 秒 19 則),2 秒理論上夠,
+#       但加上訂閱配對和第一則的傳輸就很邊緣 —— 給寬一點沒有代價,
+#       收到就會馬上返回。
+#
+# ★ 不要用 /slam_toolbox/save_map 服務當備援。2026-08-14 實測它一律回
+#   result=255,英數檔名和中文檔名都一樣 —— 這個版本的那個服務是壞的。
+timeout 90 ros2 run nav2_map_server map_saver_cli \
     -f "$OUT" --occ 0.65 --free 0.25 --fmt pgm \
-    --ros-args -p map_subscribe_transient_local:=false 2>&1 \
+    --ros-args -p map_subscribe_transient_local:=false \
+               -p save_map_timeout:=20.0 2>&1 \
     | grep -viE "lifecycle node launched|Waiting on external|design.ros2.org" \
     | sed 's/^/  /'
 
-OK=0
-if [ -f "$OUT.yaml" ] && [ -f "$OUT.pgm" ] && verify_pgm "$OUT"; then
-    OK=1
-else
+if [ ! -f "$OUT.yaml" ] || [ ! -f "$OUT.pgm" ] || ! verify_pgm "$OUT"; then
     echo
-    echo "  map_saver 失敗,改用 slam_toolbox 自己的 save_map 服務"
-    echo "  (它直接寫檔,完全不經過訂閱,所以不受 QoS 影響)"
-    timeout 40 ros2 service call /slam_toolbox/save_map \
-        slam_toolbox/srv/SaveMap "{name: {data: '$OUT'}}" 2>&1 | tail -2 | sed 's/^/    /'
-    if [ -f "$OUT.pgm" ] && verify_pgm "$OUT"; then
-        OK=1
-    fi
-fi
-if [ "$OK" != "1" ]; then
-    echo
-    echo "  ✗ 兩種方式都存不出有內容的地圖"
-    echo "    先確認 /map 真的有東西:ros2 topic echo /map --once --field info"
+    echo "  ✗ 存不出有內容的地圖"
+    echo "    確認 /map 真的有東西:"
+    echo "      ros2 topic echo /map --once --field info"
+    echo "    確認 slam_toolbox 還活著:"
+    echo "      pgrep -af async_slam_toolbox_node"
     exit 1
 fi
 
