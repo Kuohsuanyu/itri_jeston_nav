@@ -32,7 +32,9 @@
 # 順序反過來(先建圖再挑一個點當初始點)也可以,那時要:
 #     車開到那個點 -> 在 RViz 用 2D Pose Estimate 對準 -> robot.sh mark 初始位置
 #     以後用 robot.sh home 初始位置
-set -u
+# ★ 不能用 set -u。/opt/ros/humble/setup.bash 內部會讀 AMENT_TRACE_SETUP_FILES
+#   等未初始化的變數,開了 nounset 這支腳本會在第一行 source 就中止,
+#   訊息是 "AMENT_TRACE_SETUP_FILES: unbound variable" —— 看起來像 ROS 壞了。
 D=~/slam2d
 source /opt/ros/humble/setup.bash
 source ~/ws_livox/install/setup.bash
