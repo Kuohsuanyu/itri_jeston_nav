@@ -55,10 +55,21 @@ ekf_filter_node:
     # differential:只吃位姿的變化量。camera_init 和 odom 是兩個不同原點的
     # 世界,絕對位姿差一個常數偏移,不用 differential 的話 EKF 會被撕開。
     odom0: /odom_lidar_cov
+    # ★ 2026-08-13 打開 vx / vy / vyaw。
+    #
+    # 原本只餵位姿,速度欄全是 false —— 那讓 EKF 的 15 維狀態裡的 vx/vy/vyaw
+    # **完全沒有觀測**,只能在過程雜訊下隨機游走。而位置是速度的積分,
+    # 所以車停著位置照樣飄。實測(靜止 45 秒):
+    #     FAST-LIO 輸入        漂移  0.13 mm/s   角度  0.2 度/分
+    #     EKF 輸出             漂移 16.92 mm/s   角度 -33.4 度/分
+    # 濾波器的輸出比它的輸入爛 130 倍,那就是狀態不可觀測的典型症狀。
+    #
+    # 速度由 odom_cov_relay.py 微分位姿算出來(FAST-LIO 自己不填 twist)。
+    # differential 只作用在位姿,twist 不會被差分,所以兩者可以並存。
     odom0_config: [true,  true,  false,     # x   y   z
                    false, false, true,      # r   p   yaw
-                   false, false, false,     # vx  vy  vz
-                   false, false, false,     # vr  vp  vyaw
+                   true,  true,  false,     # vx  vy  vz
+                   false, false, true,      # vr  vp  vyaw
                    false, false, false]     # ax  ay  az
     odom0_differential: true
     odom0_relative: false
