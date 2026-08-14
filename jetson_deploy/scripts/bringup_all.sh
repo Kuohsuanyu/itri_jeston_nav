@@ -85,6 +85,14 @@ ps -eo cmd | grep "[f]astlio_mapping" | grep -q tf_fastlio_unused \
     && ok "FAST-LIO 的 /tf 已靜音" \
     || bad "FAST-LIO 沒有 /tf remap —— body 會有兩個父節點!"
 
+say "2b/6 把底盤這條逼到有線"
+# 樹莓派兩張網卡都開著就會同時公告有線和無線兩個 DDS locator,對端挑哪一條
+# 不保證。實測流量真的被切成兩半(有線 1015 / 無線 697 個封包 / 8 秒),
+# 而無線是 218 ms 延遲、215 ms 抖動 —— 有線只有 0.296 / 0.032。
+# wired_only.sh 在 Jetson 這端把無線那個位址變成死路,底盤完全不用改。
+# ★ ip route / iptables 不持久,所以每次啟動都要重下。
+bash ~/slam2d/wired_only.sh on 2>&1 | sed 's/^/    /'
+
 say "3/6 關掉底盤的 TF 廣播"
 # ★ 常常第一次會 "Node not found",那是節點探索還沒完成,不是真的失敗。
 ros2 daemon stop > /dev/null 2>&1; sleep 3
