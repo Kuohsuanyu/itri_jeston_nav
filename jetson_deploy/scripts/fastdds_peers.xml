@@ -96,12 +96,30 @@
         <sendSocketBufferSize>8388608</sendSocketBufferSize>
         <listenSocketBufferSize>8388608</listenSocketBufferSize>
 
-        <!-- 見檔頭的 transport_descriptors 說明。 -->
-        <useBuiltinTransports>false</useBuiltinTransports>
-        <userTransports>
-          <transport_id>shm_local</transport_id>
-          <transport_id>udp_wired_only</transport_id>
-        </userTransports>
+        <!-- ★★ 保持 true。不要再嘗試 interfaceWhiteList 那條路。★★
+             上面那組 transport_descriptors 留著只是記錄,**沒有被引用**。
+
+             2026-08-14 試了兩輪:
+               第一輪  SHM 描述器只寫 <type>SHM</type>,沒帶參數
+               第二輪  補上 segment_size 4MB / port_queue_capacity 1024 /
+                       healthy_check_timeout_ms 1000
+
+             兩輪都是同樣的結果:
+               隔離測試(兩個獨立行程、小訊息、乾淨的 domain)  ✓ 通
+               真實堆疊(十幾個節點、250 KB 點雲、domain 0)   ✗ 本機全斷
+                   /Odometry /cloud_registered_body 收不到
+                   box_link / body / camera_link 的 static TF 收不到
+                   但底盤的資料(遠端,走有線)完全正常
+                   而且節點都活著,log 是 "Node init finished"
+
+             有效的部分:Jetson 從無線送出的 DDS 封包 869 -> 1 個。
+             但代價是整個本機通訊,不能用。
+
+             要把底盤逼到有線,只能在**樹莓派**那端:
+                 sudo ip link set wlan0 down
+             位址不存在就沒有任何一層需要選,不會有 ARP 問題,
+             也不會動到本機 transport。 -->
+        <useBuiltinTransports>true</useBuiltinTransports>
 
         <builtin>
           <initialPeersList>
