@@ -91,7 +91,13 @@ say "2b/6 把底盤這條逼到有線"
 # 而無線是 218 ms 延遲、215 ms 抖動 —— 有線只有 0.296 / 0.032。
 # wired_only.sh 在 Jetson 這端把無線那個位址變成死路,底盤完全不用改。
 # ★ ip route / iptables 不持久,所以每次啟動都要重下。
-bash ~/slam2d/wired_only.sh on 2>&1 | sed 's/^/    /'
+# ★ WIRED_ONLY=0 可以跳過 —— 要單獨驗證 DDS 白名單時用,才不會兩個變數
+#   混在一起分不清是誰的作用。
+if [ "${WIRED_ONLY:-1}" = "1" ]; then
+    bash ~/slam2d/wired_only.sh on 2>&1 | sed 's/^/    /'
+else
+    echo "    跳過(WIRED_ONLY=0)"
+fi
 
 say "3/6 關掉底盤的 TF 廣播"
 # ★ 常常第一次會 "Node not found",那是節點探索還沒完成,不是真的失敗。
