@@ -1,114 +1,137 @@
 #!/usr/bin/env python3
-"""把底盤發的輪子 TF 從 Jetson 本機再發一次,讓它過得了 zenoh bridge。
+"""在 Jetson 上算出四個輪子的 TF —— 底盤的 robot_state_publisher 靠不住。
 
-── 問題 ──────────────────────────────────────────────────────────
-zenoh-bridge-ros2dds 是按「**探索到的 ROS 節點**」建路由的,不是按 topic。
-而 bridge 探索不到底盤(樹莓派)的節點。
+    python3 tf_relay_wheels.py [Hz]      預設 10
 
-★ 2026-08-12 排除過的假設,都不是原因:
-    「bridge 啟動太早」  在確認 ros2 node list 看得到底盤之後才重啟 —— 還是 0 個
-    「initialPeersList 蓋掉 multicast」  拿掉 fastdds_peers.xml —— 還是 0 個
-    「WiFi 丟包」        ping 0% 遺失、資料流 20 秒 0 次斷點
-  而且 ros2 node list **看得到**那兩個節點,bridge 就是看不到 ——
-  兩者用的探索機制不同,bridge 那條對底盤失效。
+── 為什麼不讓底盤自己發 ────────────────────────────────────────────
+底盤的 robot_state_publisher **有在跑,而且 /tf_static 發得出來**
+(base_footprint -> base_link 收得到),但它不處理 /joint_states,
+所以四個 continuous 關節的 TF 一則都沒有。2026-08-14 實測:
 
-  真正的根因(RMW 差異?bridge 的 USER_DATA 解析?)沒有釘死,
-  但已知在這個組合下復現率 100%,所以繞過它。
+    /joint_states     4 個輪子關節,10 Hz,角度值正常
+    /tf_static        base_link, body, box_link, camera_link  —— 沒有輪子
+    /tf               完全沒有 wheel_*(12 秒)
 
-實際觀測:
+這是底盤**同機 DDS 訂閱斷掉**的老毛病,跟先前
+"/chassis/motor_state is stale (11104.3s)" 是同一個病灶 ——
+發布端正常、訂閱端收不到,而且不會有任何錯誤。從 Jetson 修不了。
 
-    ros2 node list          看不到 /chassis_driver /robot_state_publisher
-    bridge 的 log           Discovered ROS Node 清單裡一個底盤的都沒有
-    但資料收得到            /tf 上的輪子 5~10 Hz、/joint_states 10 Hz
+★ 但 Jetson 自己收得到 /joint_states。所以這支不再「轉發」,而是
+  **自己做 robot_state_publisher 該做的事**:讀關節角度,套上 URDF 裡的
+  固定幾何,算出 base_link -> wheel_*_link。
 
-原因是 WiFi 上的 DDS 圖探索不對稱:端點探索完成過(所以資料在流),但
-節點層級的公告靠持續的 multicast 維持,而 AP 對 multicast 不可靠。
-試過 initialPeersList 寫死底盤 IP,沒有用。
+  好處是完全不依賴底盤的內部 DDS —— 只要 /joint_states 過得來就有輪子。
 
-結果:凡是底盤節點發的東西,bridge 都不建路由 —— 輪子的 TF 到不了 WSL,
-RViz 的 RobotModel 就少了四個輪子的 frame。RobotModel 是**逐 link 查 TF**
-決定位置的,查不到的 link 畫不出來,整台車看起來像散掉。
+── 幾何來源 ───────────────────────────────────────────────────────
+chassis_description/urdf/chassis_DD-M-HH.xacro + chassis_common.xacro:
 
-── 做法 ──────────────────────────────────────────────────────────
-訂閱 /tf,把 child 是 wheel_* 的變換存起來,再用**這個節點自己**發一次。
-bridge 探索得到本機節點,就會幫它建路由。
+    joint origin  xyz = (±front_x, ±track_y, wheel_z)   rpy = 0
+    axis          (0, ±1, 0)          -> 繞 Y 軸轉
+    parent        base_link
 
-★ 不會無限迴圈:用計時器定頻重發「最新一筆」,不是收到就轉。收到自己發的
-  只會把儲存的內容覆寫成一樣的東西,不會放大。
+★ 車型是 DD-M-HH(加高版)。DD-M 的 front_x 是 0.275、wheel_z 是 0,
+  用錯的話輪子會偏 5 mm 並浮起來 5.7 mm。
+  判斷依據:tf2_echo base_footprint base_link 回 0.209(DD-M 是 0.2032)。
 
-★ 不會製造雙父節點:parent 一樣是 base_link,值也一樣,只是同一筆變換
-  有兩個發布者。tf2 的動態緩衝以 (parent, child, 時間) 存,重複無害。
-  真正會出事的是**不同 parent**,那跟這裡無關。
-
-★ 為什麼不乾脆在 Jetson 跑 robot_state_publisher:它會連
-  base_footprint -> base_link 和 /robot_description 一起發,跟底盤的重複。
-  值一樣所以不會壞,但多兩個來源就多兩個以後會不一致的地方。只轉發缺的那部分。
+── 定時發布,不要在回呼裡直接發 ───────────────────────────────────
+★ 這支同時訂閱 /joint_states 又發 /tf。如果在回呼裡發,而 /joint_states
+  又剛好因為橋接繞回來,就會自我觸發成無窮迴圈。用定時器隔開:
+  回呼只更新狀態,定時器負責發。
 """
+import math
 import sys
 
 import rclpy
+from geometry_msgs.msg import TransformStamped
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from tf2_msgs.msg import TFMessage
+from sensor_msgs.msg import JointState
+from tf2_ros import TransformBroadcaster
 
-# 只轉發這些前綴的 child frame。留成清單是因為以後可能還有別的
-# 底盤節點發的動態變換(例如雲台),到時候加進來就好。
-PREFIXES = ("wheel_",)
-HZ = float(sys.argv[1]) if len(sys.argv) > 1 else 10.0
+RATE = float(sys.argv[1]) if len(sys.argv) > 1 else 10.0
 
-QOS = QoSProfile(depth=100,
-                 reliability=ReliabilityPolicy.RELIABLE,
-                 history=HistoryPolicy.KEEP_LAST)
+# chassis_DD-M-HH.xacro。改車型的話這裡要改。
+FRONT_X, REAR_X = 0.28, -0.28
+TRACK_Y = 0.31105
+WHEEL_Z = -0.0056939
+
+# 關節名 -> (x, y, z, 轉軸方向)
+WHEELS = {
+    "wheel_front_left_joint":  (FRONT_X,  TRACK_Y, WHEEL_Z,  1.0),
+    "wheel_front_right_joint": (FRONT_X, -TRACK_Y, WHEEL_Z, -1.0),
+    "wheel_rear_left_joint":   (REAR_X,   TRACK_Y, WHEEL_Z,  1.0),
+    "wheel_rear_right_joint":  (REAR_X,  -TRACK_Y, WHEEL_Z, -1.0),
+}
+PARENT = "base_link"
 
 
-class Relay(Node):
+def child_of(joint):
+    return joint.replace("_joint", "_link")
+
+
+class Wheels(Node):
     def __init__(self):
         super().__init__("tf_relay_wheels")
-        self.store = {}          # child -> TransformStamped
-        self.n_in = self.n_out = 0
-        self.pub = self.create_publisher(TFMessage, "/tf", QOS)
-        self.create_subscription(TFMessage, "/tf", self.on_tf, QOS)
-        self.create_timer(1.0 / HZ, self.tick)
+        self.br = TransformBroadcaster(self)
+        self.ang = {j: 0.0 for j in WHEELS}
+        self.got = 0
+        self.warned = False
+
+        self.create_subscription(
+            JointState, "/joint_states", self.on_js,
+            QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE,
+                       history=HistoryPolicy.KEEP_LAST))
+        self.create_timer(1.0 / RATE, self.tick)
         self.create_timer(30.0, self.report)
         self.get_logger().info(
-            "tf_relay_wheels 啟動,轉發 %s 開頭的 frame,%.0f Hz"
-            % ("/".join(PREFIXES), HZ))
+            "從 /joint_states 算輪子 TF,%.0f Hz(底盤的 rsp 不處理 joint_states)"
+            % RATE)
 
-    def on_tf(self, msg):
-        for t in msg.transforms:
-            if t.child_frame_id.startswith(PREFIXES):
-                self.n_in += 1
-                self.store[t.child_frame_id] = t
-
-    def tick(self):
-        if not self.store:
-            return
-        m = TFMessage()
-        # 時間戳保持原樣。改成「現在」會讓 tf2 以為有更新的資料,
-        # 底盤真的斷線時反而看不出來 —— 寧可讓它照實過期。
-        m.transforms = list(self.store.values())
-        self.pub.publish(m)
-        self.n_out += 1
+    def on_js(self, msg):
+        self.got += 1
+        for name, pos in zip(msg.name, msg.position):
+            if name in self.ang:
+                self.ang[name] = float(pos)
 
     def report(self):
-        if self.store:
-            self.get_logger().info(
-                "收到 %d 筆、轉發 %d 次,目前 %d 個 frame:%s"
-                % (self.n_in, self.n_out, len(self.store),
-                   ", ".join(sorted(self.store))))
-        else:
+        if self.got == 0 and not self.warned:
+            self.warned = True
             self.get_logger().warn(
-                "還沒收到任何 %s 開頭的變換 —— 底盤的 robot_state_publisher "
-                "有在跑嗎?(ros2 topic hz /joint_states)" % PREFIXES[0])
+                "還沒收到 /joint_states —— 底盤的 chassis_driver 起來了嗎?"
+                "輪子會停在角度 0 的位置(位置仍然正確,只是不會轉)")
+        else:
+            self.get_logger().info("已處理 %d 則 /joint_states" % self.got)
+
+    def tick(self):
+        now = self.get_clock().now().to_msg()
+        out = []
+        for joint, (x, y, z, axis) in WHEELS.items():
+            th = self.ang[joint] * axis          # 繞 Y 軸
+            t = TransformStamped()
+            t.header.stamp = now
+            t.header.frame_id = PARENT
+            t.child_frame_id = child_of(joint)
+            t.transform.translation.x = x
+            t.transform.translation.y = y
+            t.transform.translation.z = z
+            t.transform.rotation.x = 0.0
+            t.transform.rotation.y = math.sin(th / 2.0)
+            t.transform.rotation.z = 0.0
+            t.transform.rotation.w = math.cos(th / 2.0)
+            out.append(t)
+        self.br.sendTransform(out)
 
 
 def main():
     rclpy.init()
-    n = Relay()
+    n = Wheels()
     try:
         rclpy.spin(n)
     except KeyboardInterrupt:
         pass
+    finally:
+        n.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":
