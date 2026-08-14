@@ -13,6 +13,26 @@ D=~/slam2d
 LOG=/tmp/slam2d.log
 : > "$LOG"
 
+# ── ★ 先停定位模式,兩者互斥 ─────────────────────────────────────
+# map -> multi_odom 只能有一個發布者。slam_toolbox 和 AMCL 都要發那一段,
+# 兩個都跑的話 tf2 **不會報錯** —— 它會交替採用兩個答案,車的位姿以幾十 Hz
+# 在兩處之間翻轉。slam_toolbox 拿到的掃描位置全是亂的,地圖根本建不起來。
+#
+# 2026-08-13 實測就是這樣:切到建圖模式後 AMCL 沒被停掉,
+#     map -> multi_odom  57.1 Hz     (單一發布者應該是 20 Hz 上下)
+#     /map  113 x 232 格,量三次完全沒長大
+# 而且 /map 也有兩個發布者(slam_toolbox 的新圖 + map_server 的舊圖),
+# RViz 顯示的是先到的那個,看起來就像「二維地圖沒有建出來」。
+#
+# start_localization.sh 一直都會先停 slam_toolbox,但反方向漏了 ——
+# 這裡補上,讓兩支腳本對稱。
+echo "[0/3] 停掉定位模式(AMCL / map_server 跟 slam_toolbox 互斥)"
+STOPPED=0
+for p in "nav2_amcl/amcl" "nav2_map_server/map_server" "lifecycle_manager.*localization"; do
+    pkill -f "$p" 2>/dev/null && { echo "    停 $p"; STOPPED=1; }
+done
+[ "$STOPPED" = "1" ] && sleep 4 || echo "    本來就沒跑"
+
 echo "[1/3] TF:robot_tf.sh(EKF + base_link -> box_link -> body / camera_link)"
 # 方向一律是「往下接」,不要反過來發 body -> base_link。
 # base_link 的父節點是樹莓派 robot_state_publisher 在發的,反過來發等於再

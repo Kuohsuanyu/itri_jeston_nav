@@ -20,6 +20,14 @@ slam_toolbox:
     transform_publish_period: 0.02
     map_update_interval: 1.0
     resolution: 0.05
+    # ★ 要跟 start_scan.sh 的 RANGE_MIN 一致。沒設的話預設 0.0,
+    #   slam_toolbox 每次啟動都會警告:
+    #     "minimum laser range setting (0.0 m) exceeds the capabilities of..."
+    #   它會自己夾回去,所以不是故障,但把意圖寫明才不用每次重新判斷。
+    min_laser_range: 0.70
+    # ★ 這個值決定地圖上畫到多遠。改了的話 localization.yaml 的
+    #   laser_max_range 要跟著改 —— AMCL 用比這個大的值,超出範圍的雷射點
+    #   會落在地圖的空白區被算成不匹配,而那些點其實是對的。
     max_laser_range: 30.0
     minimum_time_interval: 0.2
     transform_timeout: 1.0
