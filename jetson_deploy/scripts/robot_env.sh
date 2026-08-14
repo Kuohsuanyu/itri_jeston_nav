@@ -42,10 +42,24 @@ JETSON_WIRED_IP="${JETSON_WIRED_IP:-192.168.0.100}"
 # 車內網路用的網卡。startall.sh 會等它拿到位址才啟動光達驅動。
 WIRED_IF="${WIRED_IF:-enP8p1s0}"
 
-# ── DDS 設定檔:所有節點都要吃到 ──────────────────────────────────
-# ★ 這個檔是每個行程各自讀的。原本只有 start_zenoh_jetson.sh 設,等於
-#   白名單只鎖到 bridge,其他節點照樣兩張網卡都廣告 —— 鎖了跟沒鎖一樣。
-#   你自己開的終端機也要 source 才會生效。
-export FASTRTPS_DEFAULT_PROFILES_FILE="$HOME/slam2d/fastdds_peers.xml"
+# ── ★ 不要在這裡 export FASTRTPS_DEFAULT_PROFILES_FILE ────────────
+# 2026-08-14 我加過,結果整套本機通訊斷掉,查了很久才找到。
+#
+# fastdds_peers.xml 裡有 initialPeersList。**設了它就會取代預設的多播探索**,
+# 改成只對清單裡的位址做單播。清單裡只有底盤和 127.0.0.1,而 Fast DDS 對
+# loopback 只會嘗試前幾個參與者編號(預設 4 個)。
+#
+# 本機有十幾個參與者(livox、FAST-LIO、六個 static_transform_publisher、
+# pointcloud_to_laserscan、tf_relay_wheels、tf_static_repeat、
+# fastlio_base_tf、bridge…),編號靠後的就互相看不到:
+#
+#     /tf_static 有 6 個發布者,但訂閱者只收到底盤那一筆(遠端,明確列在清單裡)
+#     本機的 box_link / body / camera_link 一筆都收不到
+#     -> TF 鏈斷在 box_link -> pointcloud_to_laserscan 把點雲整批丟掉 -> /scan 空的
+#
+# 而所有節點都活著、log 都正常,完全看不出哪裡壞了。
+#
+# 那個 profile 的用途是「讓 bridge 用單播找到底盤」,只有
+# start_zenoh_jetson.sh 需要,它自己會 export。其他節點一律用預設的多播。
 
 export BASE_IP BASE_IP_WIFI LIDAR_IP JETSON_WIRED_IP WIRED_IF
