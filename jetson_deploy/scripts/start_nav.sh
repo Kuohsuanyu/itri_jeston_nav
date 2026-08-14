@@ -39,6 +39,7 @@ stop_all() {
         "{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" \
         > /dev/null 2>&1
     echo "  已送零速度"
+    pkill -f goal_to_plan.py 2>/dev/null && echo "  停 goal_to_plan"
     for n in $NODES lifecycle_manager_navigation; do
         pkill -f "$n" 2>/dev/null && echo "  停 $n"
     done
@@ -97,6 +98,7 @@ if [ "$DRY" = "1" ]; then
     echo "  車不會動。可以在 RViz 看規劃出來的路徑對不對。"
     NODES="planner_server"
     START="planner_server"
+    DRY_BRIDGE=1
 else
     echo "=== 完整導航(★ 車會動)==="
     echo "  速度上限 0.10 m/s / 0.15 rad/s —— 走路速度的五分之一"
@@ -127,6 +129,17 @@ setsid nohup ros2 run nav2_lifecycle_manager lifecycle_manager --ros-args \
     >> "$LOG" 2>&1 < /dev/null &
 sleep 14
 
+# ★ 乾跑模式要自己接 /goal_pose。RViz 的「2D Goal Pose」只是把目標發到
+#   /goal_pose,它不會叫任何人規劃 —— 完整模式是 bt_navigator 訂閱它然後
+#   跑行為樹。乾跑刻意不起 bt_navigator(那樣才沒有任何節點會發 /cmd_vel),
+#   所以要補一個只呼叫 ComputePathToPose 的橋接。
+if [ "${DRY_BRIDGE:-0}" = "1" ]; then
+    pkill -f goal_to_plan.py 2>/dev/null; sleep 1
+    cd "$D" && setsid nohup python3 goal_to_plan.py         > /tmp/goal_to_plan.log 2>&1 < /dev/null &
+    sleep 4
+    pgrep -f goal_to_plan.py > /dev/null         && echo "  goal_to_plan OK(/goal_pose -> /plan)"         || { echo "  goal_to_plan DEAD"; tail -5 /tmp/goal_to_plan.log; }
+fi
+
 echo
 echo "=== 狀態 ==="
 for n in $START; do
@@ -143,7 +156,9 @@ if [ "$DRY" = "1" ]; then
 cat <<'MSG'
 
 === 乾跑模式 ===
-  在 RViz 用 "Nav2 Goal" 點目標,只會算出路徑,車不會動。
+  在 RViz 工具列用 **2D Goal Pose** 點目標(不是 Nav2 Goal ——
+  那是 nav2_rviz_plugins 額外裝的,這邊沒有)。
+  路徑會畫在 /plan 上,車不會動。
   路徑看起來合理之後,再跑完整模式:
       bash ~/slam2d/start_nav.sh
 MSG
