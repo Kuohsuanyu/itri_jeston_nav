@@ -42,6 +42,45 @@
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
 
+    <!-- ★ 2026-08-14:DDS 只綁有線 + 本機。這一段**不動底盤任何設定**,
+         只是叫 Jetson 自己的 DDS 別用無線那張網卡。
+         ─────────────────────────────────────────────────────────
+         沒有這一段的話,Jetson 會把 192.168.40.98(無線)也廣告成 locator,
+         底盤就往那邊找。實測封包:
+
+             192.168.40.160 → 239.255.0.1:7400          SPDP 多播
+             ARP who-has 192.168.40.98 tell 192.168.40.160   一直重問沒人回
+             有線上只有 7410~7432 的 52 bytes metatraffic,沒有使用者資料
+
+         也就是說探索只完成一半,topic 永遠配對不起來。而無線的品質是
+         平均 1094 ms、抖動 828 ms,有線是 0.330 / 0.012 —— 差三千倍。
+
+         ★ SHM 一定要明確列。檔案裡的舊註解記著「試過換自訂 transport,
+           連本機行程都連不上」—— 那次失敗是因為只加了 UDP、把內建的 SHM
+           一起關掉了。同機行程靠 SHM,沒有它當然斷。這次兩個都列。
+
+         ★ 127.0.0.1 也要留,少數情況本機會走 loopback 而不是 SHM。
+
+         ★ 筆電不受影響:zenoh bridge 對筆電走 TCP(7447),不是 DDS。
+           它的 DDS 側只需要跟本機和底盤通,兩者都在白名單內。
+
+         ★ 本機節點如果互相看不到(ros2 node list 只剩自己),
+           把 useBuiltinTransports 改回 true —— 白名單失效但至少會通。 -->
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>shm_local</transport_id>
+        <type>SHM</type>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>udp_wired_only</transport_id>
+        <type>UDPv4</type>
+        <interfaceWhiteList>
+          <address>192.168.0.100</address>
+          <address>127.0.0.1</address>
+        </interfaceWhiteList>
+      </transport_descriptor>
+    </transport_descriptors>
+
     <participant profile_name="jetson_participant" is_default_profile="true">
       <rtps>
         <!-- 點雲每則 0.36 MB,遠超過單一 UDP datagram,一定會分片。
@@ -49,9 +88,12 @@
         <sendSocketBufferSize>8388608</sendSocketBufferSize>
         <listenSocketBufferSize>8388608</listenSocketBufferSize>
 
-        <!-- 保持 true。試過用自訂 transport 取代內建的,結果連本機
-             行程之間都連不上。這裡只加參數,不換 transport。 -->
-        <useBuiltinTransports>true</useBuiltinTransports>
+        <!-- ★ 2026-08-14 改 false,並在上面明確列出 SHM + 白名單過的 UDP。 -->
+        <useBuiltinTransports>false</useBuiltinTransports>
+        <userTransports>
+          <transport_id>shm_local</transport_id>
+          <transport_id>udp_wired_only</transport_id>
+        </userTransports>
 
         <builtin>
           <initialPeersList>
@@ -61,12 +103,8 @@
                 <address>192.168.0.101</address>
               </udpv4>
             </locator>
-            <!-- 同一台的無線位址,有線沒接好時的退路 -->
-            <locator>
-              <udpv4>
-                <address>192.168.40.160</address>
-              </udpv4>
-            </locator>
+            <!-- ★ 底盤的無線位址已移除。白名單擋掉無線之後那個位址根本
+                 送不出去,留著只會讓 Fast DDS 每 100 ms 對一個死路重試。 -->
             <!-- 自己,確保本機行程之間一定看得到 -->
             <locator>
               <udpv4>
