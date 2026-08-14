@@ -66,19 +66,40 @@ ekf_filter_node:
     odom0_pose_rejection_threshold: 2.0     # 馬氏距離。跳超過這個就當離群值丟掉
                                             # —— FAST-LIO 偶發單幀跳 7.9 cm
 
-    # ── 輪速(補間用)─────────────────────────────────────────
-    # 共變異數比光達大一個數量級,所以它的作用是在光達兩幀之間補上平滑,
-    # 而不是決定位置。打滑時會被光達拉回來。
-    odom1: /odom_wheel_cov
-    odom1_config: [true,  true,  false,
-                   false, false, true,
-                   false, false, false,
-                   false, false, false,
-                   false, false, false]
-    odom1_differential: true
-    odom1_relative: false
-    odom1_queue_size: 10
-    odom1_pose_rejection_threshold: 3.0
+    # ── 輪速(補間用)★ 2026-08-13 停用 ────────────────────────
+    #
+    # 底盤的編碼器回授整條是死的。車實際往前走 1.17 公尺時實測:
+    #
+    #     /chassis/motor_state   left_rpm 0   right_rpm 0     (三次都是)
+    #     /odom  twist           linear.x 0.0  angular.z 0.0  (三次都是)
+    #     /odom  pose            x = -1.3974957727448127      隔 8 秒
+    #                            x = -1.3974957727448127      完全一樣
+    #
+    # 時間戳有在前進(10 Hz 正常發布),但數值凍結 —— 不是里程計積分卡住,
+    # 是連馬達轉速都讀不到。跟先前 "motor_state is stale (11104.3s)" 同源。
+    #
+    # 後果:輪速說「完全沒動」而且**共變異數不會跟著變大**,EKF 沒有辦法
+    # 知道這個感測器壞了,它只看到一個非常確定自己靜止的來源。融合結果被
+    # 拉回 0.016 m —— 光達明明報 1.175 m。於是 multi_odom 不動、RViz 上車
+    # 不動、slam_toolbox 收不到位移,地圖永遠不會長。
+    #
+    # 停用之後 multi_odom 完全由 FAST-LIO 驅動。地圖本來就是靠光達建的,
+    # 代價主要是原地旋轉時少了輪速補間,平滑度略降。
+    #
+    # ★ 底盤修好之後把下面四行的註解拿掉就恢復。判斷修好了沒:
+    #       ros2 topic echo /chassis/motor_state --once | grep rpm
+    #   推車或遙控時 rpm 不是 0 就是好了。
+    #
+    # odom1: /odom_wheel_cov
+    # odom1_config: [true,  true,  false,
+    #                false, false, true,
+    #                false, false, false,
+    #                false, false, false,
+    #                false, false, false]
+    # odom1_differential: true
+    # odom1_relative: false
+    # odom1_queue_size: 10
+    # odom1_pose_rejection_threshold: 3.0
 
     # ── 過程雜訊 ─────────────────────────────────────────────
     # 對角線,順序 x y z roll pitch yaw vx vy vz vr vp vyaw ax ay az。
