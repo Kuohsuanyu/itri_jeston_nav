@@ -24,8 +24,22 @@
 # --pub-max-frequency 吃正規表達式而且可以重複,效果一樣夠:
 # 把大訊息壓到「看得到就好」的頻率,小訊息維持全速。
 #
-# 維持全速的(RViz 真正需要的):
-#     /tf  /tf_static  /scan  /map  /odom  /odometry/filtered  /robot_description
+# 維持全速的(RViz 真正需要的,全部都是小訊息):
+#     /tf  /tf_static  /scan  /map  /odometry/filtered
+#     /amcl_pose  /particle_cloud  /initialpose  /goal_pose
+#
+# ★ 2026-08-13 把點雲和影像的節流再壓一個數量級(0.2 -> 0.05 Hz)。
+#
+#   二維導航完全用不到三維點雲:slam_toolbox、AMCL、Nav2 的 costmap
+#   全部只吃 /scan 和 /map。點雲只在人要「看一眼」時才有意義,
+#   而那時 0.05 Hz(20 秒一張)也看得到形狀。
+#
+#   ★ 但真正決定有沒有流量的是**對端有沒有訂閱**。zenoh 只在遠端宣告了
+#     匹配的訂閱時才送 —— 所以 RViz 裡不要勾 Cloud 3D,才是最有效的省法。
+#     節流只是保險,免得不小心勾到就把鏈路塞爆。
+#
+#   要仔細看三維點雲,用 robot.sh view(:8100 的即時檢視器)——
+#   那條走 HTTP、只在你開著網頁時才有流量,而且可以自己調抽稀。
 # ★★ 啟動順序很重要:一定要在**底盤上線之後**才啟動這支。
 #
 # zenoh-bridge-ros2dds 是按「探索到的 ROS 節點」建路由的,不是按 topic。
@@ -82,13 +96,13 @@ echo "  啟動 bridge(監聽 tcp/0.0.0.0:7447)"
 setsid nohup zenoh-bridge-ros2dds \
     -l tcp/0.0.0.0:7447 \
     --no-multicast-scouting \
-    --pub-max-frequency '/camera/.*=0.2' \
-    --pub-max-frequency '/livox/lidar=0.2' \
-    --pub-max-frequency '/livox/imu=2.0' \
-    --pub-max-frequency '/cloud_registered=1.0' \
-    --pub-max-frequency '/cloud_registered_body=0.5' \
-    --pub-max-frequency '/cloud_effected=0.1' \
-    --pub-max-frequency '/Laser_map=0.1' \
+    --pub-max-frequency '/camera/.*=0.05' \
+    --pub-max-frequency '/livox/lidar=0.05' \
+    --pub-max-frequency '/livox/imu=1.0' \
+    --pub-max-frequency '/cloud_registered=0.2' \
+    --pub-max-frequency '/cloud_registered_body=0.2' \
+    --pub-max-frequency '/cloud_effected=0.05' \
+    --pub-max-frequency '/Laser_map=0.05' \
     --pub-max-frequency '/slam_toolbox/.*=0.5' \
     --pub-max-frequency '/path=1.0' \
     > "$LOG" 2>&1 < /dev/null &

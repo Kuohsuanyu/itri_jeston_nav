@@ -99,18 +99,38 @@ start_capped fastlio-run 3G /tmp/fastlio.log \
 sleep 18
 
 # Camera:only depth + color, no pointcloud —— 那個在 CPU 上組點雲是白做工。
-# intrinsics on the first CameraInfo; starting it first just means the first
-# few seconds of cloud arrive uncolored.
-echo "[4/8] RealSense D435 (640x480 @15, aligned depth)"
-setsid nohup ros2 launch realsense2_camera rs_launch.py \
-    enable_depth:=true enable_color:=true \
-    enable_infra1:=false enable_infra2:=false \
-    depth_module.depth_profile:=640x480x15 \
-    rgb_camera.color_profile:=640x480x15 \
-    pointcloud.enable:=false align_depth.enable:=true \
-    > /tmp/realsense.log 2>&1 < /dev/null &
-sleep 22
-pgrep -f realsense2_camera_node > /dev/null && echo "  camera ok" || echo "  camera DEAD"
+#
+# ★ 2026-08-13 起預設**不開**。要開:
+#       CAMERA=1 bash ~/slam2d/startall.sh
+#   或直接 bash ~/slam2d/startall.sh camera
+#
+# 理由:建圖和導航完全用不到它。/scan 是從光達壓出來的,slam_toolbox、
+# AMCL、Nav2 的 costmap 全部只吃 /scan 和 /map。相機的成本卻不小:
+#
+#     CPU        29.8%(六核心的三分之一顆)
+#     頻寬       color 640*480*3*15 ≈ 13 MB/s、depth 和 aligned_depth 各 9 MB/s
+#                bridge 節流到 0.2 Hz 之後仍然是 184 KB/s
+#     記憶體     1.3%
+#
+# 而 Jetson 對筆電是走 WiFi,那條路實測會掉到 75~100% 遺失。少一個大流量
+# 來源就多一分餘裕。
+#
+# 之後要做視覺(彩色點雲、人員偵測)再打開。
+if [ "${CAMERA:-0}" = "1" ] || [ "${1:-}" = "camera" ]; then
+    echo "[4/8] RealSense D435 (640x480 @15, aligned depth)"
+    setsid nohup ros2 launch realsense2_camera rs_launch.py \
+        enable_depth:=true enable_color:=true \
+        enable_infra1:=false enable_infra2:=false \
+        depth_module.depth_profile:=640x480x15 \
+        rgb_camera.color_profile:=640x480x15 \
+        pointcloud.enable:=false align_depth.enable:=true \
+        > /tmp/realsense.log 2>&1 < /dev/null &
+    sleep 22
+    pgrep -f realsense2_camera_node > /dev/null && echo "  camera ok" || echo "  camera DEAD"
+else
+    echo "[4/8] RealSense D435 —— 跳過(建圖/導航用不到,省 30% CPU)"
+    echo "       要開:CAMERA=1 bash ~/slam2d/startall.sh"
+fi
 
 # base_link -> camera_link. ICP-calibrated 2026-08-07, verified twice.
 # Without this TF the cloud simply stays uncolored -- nothing else breaks.
@@ -136,9 +156,10 @@ echo "[5/8] camera extrinsic"
 #   兩支腳本都起同樣的東西會互相 pkill,實測會卡住。
 
 echo "=== status ==="
-for p in livox_ros_driver2_node fastlio_mapping realsense2_camera_node; do
+for p in livox_ros_driver2_node fastlio_mapping; do
     pgrep -f "$p" > /dev/null && echo "  [OK]   $p" || echo "  [DEAD] $p"
 done
+pgrep -f realsense2_camera_node > /dev/null     && echo "  [OK]   realsense2_camera_node"     || echo "  [OFF]  realsense2_camera_node (deliberate -- CAMERA=1 to enable)"
 
 # ★ A live process is NOT proof the node works. A stale FAST-LIO whose IMU
 #   subscription died keeps running and publishes nothing -- pgrep says [OK]
